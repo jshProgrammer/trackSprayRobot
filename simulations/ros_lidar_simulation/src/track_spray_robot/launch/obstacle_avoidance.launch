@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<launch>
+
+  <!-- Obstacle Avoidance Parameters -->
+  <arg name="obstacle_distance" default="1.0"/>
+  <arg name="forward_velocity" default="0.5"/>
+  <arg name="angular_velocity" default="0.5"/>
+
+  <!-- Obstacle Avoidance Node with Parameters -->
+  <node pkg="track_spray_robot" type="obstacle_avoidance_node.py" name="obstacle_avoidance" output="screen">
+    <param name="obstacle_distance_threshold" value="$(arg obstacle_distance)"/>
+    <param name="forward_velocity" value="$(arg forward_velocity)"/>
+    <param name="angular_velocity" value="$(arg angular_velocity)"/>
+  </node>
+
+</launch>
