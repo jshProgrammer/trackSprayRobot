@@ -22,7 +22,7 @@ class ObstacleAvoidance:
         self.lidar_sub = rospy.Subscriber('robot/scan', LaserScan, self.lidar_callback)
         
         # Publisher for movement commands
-        self.cmd_vel_pub = rospy.Publisher('cmd_vel', Twist, queue_size=10)
+        self.cmd_vel_pub = rospy.Publisher('cmd_vel', Twist, queue_size=1)
         
         # State Variables
         self.current_scan = None
@@ -67,14 +67,14 @@ class ObstacleAvoidance:
         if not valid_ranges:
             rospy.logwarn("No valid LiDAR-measurements received")
             return
-        
+
         # -- Calculation of minimal distance --
         front_ranges = []
         for i, angle in enumerate(valid_angles):
             # angle range of -30° until +30°
             if abs(angle) < math.radians(30):
                 front_ranges.append(valid_ranges[i])
-        
+
         if front_ranges:
             min_front_distance = min(front_ranges)
         else:

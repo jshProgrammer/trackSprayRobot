@@ -16,7 +16,7 @@
         <color rgba="0.7 0.7 0.7 1"/>
       </material>
     </visual>
-    <collision>
+    <collision name="lidar_ignore" laser="false">
       <geometry>
         <box size="0.6 0.4 0.2"/>
       </geometry>
@@ -54,7 +54,7 @@
         <color rgba="0.0 0.0 0.0 1"/>
       </material>
     </visual>
-    <collision>
+    <collision name="lidar_ignore" laser="false">
       <origin xyz="0 0 0" rpy="1.5708 0 0"/>
       <geometry>
         <cylinder radius="0.075" length="0.05"/>
@@ -78,7 +78,7 @@
         <color rgba="0.0 0.0 0.0 1"/>
       </material>
     </visual>
-    <collision>
+    <collision name="lidar_ignore" laser="false">
       <origin xyz="0 0 0" rpy="1.5708 0 0"/>
       <geometry>
         <cylinder radius="0.075" length="0.05"/>
@@ -100,7 +100,7 @@
         <color rgba="0.0 0.0 0.0 1"/>
       </material>
     </visual>
-    <collision>
+    <collision name="lidar_ignore" laser="false">
       <geometry>
         <sphere radius="0.05"/>
       </geometry>
@@ -121,11 +121,11 @@
         <color rgba="1.0 0.0 0.0 1"/>
       </material>
     </visual>
-    <collision>
+    <!--<collision name="lidar_ignore" laser="false">
       <geometry>
         <cylinder radius="0.05" length="0.05"/>
       </geometry>
-    </collision>
+    </collision>-->
   </link>
 
   <link name="ultrasound_link">

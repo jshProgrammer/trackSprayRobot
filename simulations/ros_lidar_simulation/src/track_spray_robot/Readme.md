@@ -60,3 +60,12 @@ Start the Gazebo simulation for the Track Spray Robot.
 ```bash
 roslaunch track_spray_robot track_spray_robot.launch
 ```
+
+---
+
+### 6. Optional: Visualize lidar points with rviz
+```bash
+rviz
+```
+- Enter LaserScan and select the topic /robot/scan
+- Set fixed_frame to lidar_link
