@@ -213,7 +213,7 @@ Contributors:
 - [Tom Knoblach](https://github.com/Gottschalk125)
 - [Jasmin Wander](https://github.com/xjasx4)
 - [David Heppenheimer](https://github.com/davidhepp)
-- [Maximilian Keller]
+- [Maximilian Keller](https://github.com/MaxCods)
 - [Joshua Pfennig](https://github.com/jshProgrammer)
 
 ------------------------------------------------------------------------
