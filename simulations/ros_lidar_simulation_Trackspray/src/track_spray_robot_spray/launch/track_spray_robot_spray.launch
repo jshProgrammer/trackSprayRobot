@@ -1,0 +1,46 @@
+<?xml version="1.0"?>
+
+<launch>
+
+  <!-- ============================================================ -->
+  <!--  Gazebo                                                       -->
+  <!-- ============================================================ -->
+  <include file="$(find gazebo_ros)/launch/empty_world.launch">
+    <arg name="world_name"   value="$(find track_spray_robot_spray)/worlds/obstacle_world.world"/>
+    <arg name="paused"       value="false"/>
+    <arg name="use_sim_time" value="true"/>
+    <arg name="gui"          value="true"/>
+    <arg name="headless"     value="false"/>
+    <arg name="debug"        value="false"/>
+  </include>
+
+  <!-- ============================================================ -->
+  <!--  Roboter laden und spawnen                                    -->
+  <!-- ============================================================ -->
+  <param name="robot_description"
+         command="$(find xacro)/xacro '$(find track_spray_robot_spray)/urdf/track_spray_robot_spray.urdf'"/>
+
+  <node name="spawn_urdf" pkg="gazebo_ros" type="spawn_model"
+        args="-urdf -model track_spray_robot_spray -param robot_description -x 0 -y 0 -z 0.2"/>
+
+  <!-- ============================================================ -->
+  <!--  TF / State Publisher                                         -->
+  <!-- ============================================================ -->
+  <node pkg="robot_state_publisher" type="robot_state_publisher"
+        name="robot_state_publisher" output="screen">
+    <param name="publish_frequency" type="double" value="50.0"/>
+  </node>
+
+  <node pkg="tf" type="static_transform_publisher" name="odom_base_broadcaster"
+        args="0 0 0 0 0 0 odom base_link 100"/>
+
+  <!-- ============================================================ -->
+  <!--  Drive-and-Spray Node                                         -->
+  <!--  – faehrt geradeaus, stoppt alle 2 m, betaetigt Aktuator,    -->
+  <!--    setzt Bodenmarker                                          -->
+  <!-- ============================================================ -->
+  <node pkg="track_spray_robot_spray" type="drive_and_spray_node.py"
+        name="drive_and_spray" output="screen"/>
+
+      
+</launch>
