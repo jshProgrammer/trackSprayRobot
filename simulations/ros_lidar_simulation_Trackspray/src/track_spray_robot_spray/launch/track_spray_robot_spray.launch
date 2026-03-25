@@ -1,10 +1,14 @@
 <?xml version="1.0"?>
-
 <launch>
 
-  <!-- ============================================================ -->
-  <!--  Gazebo                                                       -->
-  <!-- ============================================================ -->
+  <arg name="backend"          default="sim"/>
+  <arg name="drive_distance"   default="2.0"/>
+  <arg name="forward_velocity" default="0.5"/>
+  <arg name="stroke_down"      default="0.10"/>
+  <arg name="stroke_up"        default="0.0"/>
+  <arg name="stroke_duration"  default="0.6"/>
+  <arg name="spray_dwell_time" default="1.0"/>
+
   <include file="$(find gazebo_ros)/launch/empty_world.launch">
     <arg name="world_name"   value="$(find track_spray_robot_spray)/worlds/obstacle_world.world"/>
     <arg name="paused"       value="false"/>
@@ -14,33 +18,27 @@
     <arg name="debug"        value="false"/>
   </include>
 
-  <!-- ============================================================ -->
-  <!--  Roboter laden und spawnen                                    -->
-  <!-- ============================================================ -->
   <param name="robot_description"
          command="$(find xacro)/xacro '$(find track_spray_robot_spray)/urdf/track_spray_robot_spray.urdf'"/>
-
   <node name="spawn_urdf" pkg="gazebo_ros" type="spawn_model"
         args="-urdf -model track_spray_robot_spray -param robot_description -x 0 -y 0 -z 0.2"/>
 
-  <!-- ============================================================ -->
-  <!--  TF / State Publisher                                         -->
-  <!-- ============================================================ -->
   <node pkg="robot_state_publisher" type="robot_state_publisher"
         name="robot_state_publisher" output="screen">
     <param name="publish_frequency" type="double" value="50.0"/>
   </node>
-
   <node pkg="tf" type="static_transform_publisher" name="odom_base_broadcaster"
         args="0 0 0 0 0 0 odom base_link 100"/>
 
-  <!-- ============================================================ -->
-  <!--  Drive-and-Spray Node                                         -->
-  <!--  – faehrt geradeaus, stoppt alle 2 m, betaetigt Aktuator,    -->
-  <!--    setzt Bodenmarker                                          -->
-  <!-- ============================================================ -->
   <node pkg="track_spray_robot_spray" type="drive_and_spray_node.py"
-        name="drive_and_spray" output="screen"/>
+        name="drive_and_spray" output="screen">
+    <param name="backend"          value="$(arg backend)"/>
+    <param name="drive_distance"   value="$(arg drive_distance)"/>
+    <param name="forward_velocity" value="$(arg forward_velocity)"/>
+    <param name="stroke_down"      value="$(arg stroke_down)"/>
+    <param name="stroke_up"        value="$(arg stroke_up)"/>
+    <param name="stroke_duration"  value="$(arg stroke_duration)"/>
+    <param name="spray_dwell_time" value="$(arg spray_dwell_time)"/>
+  </node>
 
-      
 </launch>
