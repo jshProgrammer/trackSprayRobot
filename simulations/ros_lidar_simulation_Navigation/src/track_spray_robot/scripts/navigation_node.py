@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Navigation Node for Track Spray Robot
-Navigates to a hardcoded goal point while avoiding obstacles
+Navigates to a hardcoded goal point list while avoiding obstacles
 """
 
 import rospy
@@ -19,8 +19,9 @@ class NavigationNode:
         self.obstacle_distance_threshold = rospy.get_param('~obstacle_distance_threshold', 1.0)
         self.forward_velocity = rospy.get_param('~forward_velocity', 0.3)
         self.angular_velocity = rospy.get_param('~angular_velocity', 0.5)
-        self.goal_x = rospy.get_param('~goal_x', 5.0)  # Hardcoded goal
-        self.goal_y = rospy.get_param('~goal_y', 2.0)
+        # Waypoints: Liste von (x, y) Punkten
+        self.waypoints = [(5.0, 2.0), (0.0, 5.0), (-3.0, 0.0)]  # Beispiel-Waypoints
+        self.current_waypoint_index = 0
         self.distance_tolerance = 0.1  # Stop when within this distance
         
         # Subscribers
@@ -39,7 +40,10 @@ class NavigationNode:
         self.log_interval = 1.0
         
         rospy.loginfo("Navigation Node gestartet")
-        rospy.loginfo(f"Goal: ({self.goal_x}, {self.goal_y})")
+        if self.waypoints:
+            rospy.loginfo(f"Waypoints: {self.waypoints}")
+        else:
+            rospy.logwarn("Keine Waypoints definiert!")
         
     def model_states_callback(self, msg):
         try:
@@ -64,21 +68,43 @@ class NavigationNode:
         yaw = math.atan2(2.0*(orientation.w*orientation.z + orientation.x*orientation.y),
                          1.0 - 2.0*(orientation.y*orientation.y + orientation.z*orientation.z))
         
-        # Calculate distance and angle to goal
-        dx = self.goal_x - x
-        dy = self.goal_y - y
-        distance = math.sqrt(dx**2 + dy**2)
-        angle_to_goal = math.atan2(dy, dx) - yaw
-        angle_to_goal = math.atan2(math.sin(angle_to_goal), math.cos(angle_to_goal))  # Normalize to -pi to pi
-        
-        # Check if at goal
-        if distance < self.distance_tolerance:
+        # Calculate distance and angle to current waypoint
+        if self.current_waypoint_index >= len(self.waypoints):
+            # All waypoints reached
             if not self.at_goal:
-                rospy.loginfo(f"Reached goal! Position: ({x:.2f}, {y:.2f})")
+                rospy.loginfo("Alle Waypoints erreicht! Roboter stoppt.")
                 self.at_goal = True
             cmd_vel = Twist()
             self.cmd_vel_pub.publish(cmd_vel)
             return
+        
+        goal_x, goal_y = self.waypoints[self.current_waypoint_index]
+        dx = goal_x - x
+        dy = goal_y - y
+        distance = math.sqrt(dx**2 + dy**2)
+        angle_to_goal = math.atan2(dy, dx) - yaw
+        angle_to_goal = math.atan2(math.sin(angle_to_goal), math.cos(angle_to_goal))  # Normalize to -pi to pi
+        
+        # Check if at current waypoint
+        if distance < self.distance_tolerance:
+            rospy.loginfo(f"Waypoint {self.current_waypoint_index + 1} erreicht: ({goal_x}, {goal_y})")
+            self.current_waypoint_index += 1
+            if self.current_waypoint_index >= len(self.waypoints):
+                # All waypoints reached
+                if not self.at_goal:
+                    rospy.loginfo("Alle Waypoints erreicht! Roboter stoppt.")
+                    self.at_goal = True
+                cmd_vel = Twist()
+                self.cmd_vel_pub.publish(cmd_vel)
+                return
+            else:
+                # Next waypoint
+                goal_x, goal_y = self.waypoints[self.current_waypoint_index]
+                dx = goal_x - x
+                dy = goal_y - y
+                distance = math.sqrt(dx**2 + dy**2)
+                angle_to_goal = math.atan2(dy, dx) - yaw
+                angle_to_goal = math.atan2(math.sin(angle_to_goal), math.cos(angle_to_goal))
         
         self.at_goal = False
         
@@ -101,7 +127,8 @@ class NavigationNode:
         # Logging
         current_time = time.time()
         if current_time - self.last_log_time >= self.log_interval:
-            rospy.loginfo(f"Position: ({x:.2f}, {y:.2f}), Distance to goal: {distance:.2f}, Angle to goal: {math.degrees(angle_to_goal):.1f}°")
+            goal_x, goal_y = self.waypoints[min(self.current_waypoint_index, len(self.waypoints)-1)]
+            rospy.loginfo(f"Position: ({x:.2f}, {y:.2f}), Ziel {self.current_waypoint_index + 1}: ({goal_x}, {goal_y}), Abstand: {distance:.2f}, Winkel: {math.degrees(angle_to_goal):.1f}°")
             self.last_log_time = current_time
         
         # Control logic

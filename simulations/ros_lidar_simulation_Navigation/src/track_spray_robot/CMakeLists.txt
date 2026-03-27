@@ -18,7 +18,6 @@ catkin_package()
 
 # Installation der Python-Skripte
 catkin_install_python(PROGRAMS
-  scripts/obstacle_avoidance_node.py
   scripts/navigation_node.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
