@@ -17,6 +17,8 @@ class MotorDriver:
         self.pwm_max_fwd = rospy.get_param("~pwm_max_fwd")
         self.pwm_max_bwd = rospy.get_param("~pwm_max_bwd")
 
+        self.motor_frequency = rospy.get_param("~motor_frequency")
+
         self.max_linear  = rospy.get_param("~max_linear")
         self.max_angular = rospy.get_param("~max_angular")
 
@@ -44,13 +46,13 @@ class MotorDriver:
     def set_motor_left(self, speed: float):
         pulse = int(1000000 * speed)
 
-        self.pi.hardware_PWM(self.pin_left, 10000, pulse)
+        self.pi.hardware_PWM(self.pin_left, self.motor_frequency, pulse)
 
 
     def set_motor_right(self, speed: float):
         pulse = int(1000000 * speed)
 
-        self.pi.hardware_PWM(self.pin_right, 10000, pulse)
+        self.pi.hardware_PWM(self.pin_right, self.motor_frequency, pulse)
 
 
     # =========================
@@ -58,9 +60,10 @@ class MotorDriver:
     # =========================
     def cmd_callback(self, msg: Twist):
 
-        # normalize input to take maximum velocities into consideration
-        linear = min(msg.linear.x / self.max_linear, self.max_linear)
-        angular = min(msg.angular.z / self.max_angular, self.max_angular)
+        # normalize input to take maximum velocities into consideration and does not allow for negative values
+        # (driving backwards not allowed)
+        linear = max(min(msg.linear.x / self.max_linear, self.max_linear), 0)
+        angular = max(min(msg.angular.z / self.max_angular, self.max_angular), 0)
 
         # Differential drive
         left_speed = linear - angular

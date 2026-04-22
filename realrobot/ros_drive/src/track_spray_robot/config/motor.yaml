@@ -12,6 +12,8 @@ motor_driver:
   pwm_max_fwd: 2000
   pwm_max_bwd: 1000
 
+  motor_frequency: 10000
+
   # =========================
   # DRIVE LIMITS
   # =========================
