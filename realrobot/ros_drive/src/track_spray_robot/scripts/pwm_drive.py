@@ -66,6 +66,9 @@ class MotorDriver:
         linear = max(min(msg.linear.x / self.max_linear, self.max_linear), 0)
         angular = max(min(msg.angular.z / self.max_angular, self.max_angular), 0)
 
+
+        # TODO: does not take threshold into consideration yet => wait until decision whether inverting is ok (driving backwards) 
+
         # Differential drive
         left_speed = linear - (angular * self.wheel_base / 2)
         right_speed = linear + (angular * self.wheel_base / 2)

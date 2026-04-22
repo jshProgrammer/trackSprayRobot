@@ -1,5 +1,5 @@
 <launch>
       <rosparam file="$(find track_spray_robot)/config/motor.yaml" command="load"/>
-      <node name="motor_driver" pkg="track_spray_robot" type="pwm_3.py"
+      <node name="motor_driver" pkg="track_spray_robot" type="pwm_drive.py"
             output="screen"/>
 </launch>
