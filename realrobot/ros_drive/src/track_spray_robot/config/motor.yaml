@@ -1,0 +1,24 @@
+motor_driver:
+  # =========================
+  # GPIO PINS
+  # =========================
+  pin_left: 18
+  pin_right: 13
+
+  # =========================
+  # ESC PWM SETTINGS (µs)
+  # =========================
+  pwm_stop: 1500
+  pwm_max_fwd: 2000
+  pwm_max_bwd: 1000
+
+  # =========================
+  # DRIVE LIMITS
+  # =========================
+  max_linear: 0.5      # m/s
+  max_angular: 1.0     # rad/s
+
+  # =========================
+  # SAFETY / TIMING
+  # =========================
+  cmd_timeout: 0.5 

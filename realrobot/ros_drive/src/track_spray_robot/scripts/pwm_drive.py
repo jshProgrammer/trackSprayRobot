@@ -3,72 +3,92 @@ import rospy
 from geometry_msgs.msg import Twist
 import pigpio
 
-# =========================
-# GPIO CONFIG
-# =========================
-PIN_LEFT = 18   # GPIO18 = PIN 12
-PIN_RIGHT = 13   # GPIO13 = PIN 33
+class MotorDriver:
 
-# =========================
-# ESC SETTINGS
-# =========================
-PWM_STOP    = 1500
-PWM_MAX_FWD = 2000
-PWM_MAX_BWD = 1000
+    def __init__(self):
 
-pi = pigpio.pi()
+        # =========================
+        # PARAMETER LOAD
+        # =========================
+        self.pin_left  = rospy.get_param("~pin_left")
+        self.pin_right = rospy.get_param("~pin_right")
 
-if not pi.connected:
-    raise RuntimeError("pigpio daemon not active! -> sudo pigpiod")
+        self.pwm_stop    = rospy.get_param("~pwm_stop")
+        self.pwm_max_fwd = rospy.get_param("~pwm_max_fwd")
+        self.pwm_max_bwd = rospy.get_param("~pwm_max_bwd")
 
-
-def set_motor_left(speed: float):
-    pulse = int(1000000 * speed)
-
-    pi.hardware_PWM(PIN_LEFT, 10000, pulse)
+        self.max_linear  = rospy.get_param("~max_linear")
+        self.max_angular = rospy.get_param("~max_angular")
 
 
-def set_motor_right(speed: float):
-    pulse = int(1000000 * speed)
+        # =========================
+        # PIGPIO INIT
+        # =========================
+        self.pi = pigpio.pi()
+        if not self.pi.connected:
+            raise RuntimeError("pigpio daemon not running -> sudo pigpiod")
+        
+        # =========================
+        # ROS NODE
+        # =========================
+        rospy.Subscriber("/cmd_vel", Twist, self.cmd_callback, queue_size=10)
+        rospy.on_shutdown(self.shutdown)
 
-    pi.hardware_PWM(PIN_RIGHT, 10000, pulse)
-
-
-def callback(msg: Twist):
-    linear = msg.linear.x
-    angular = msg.angular.z
-
-    # Differential drive
-    left_speed = linear - angular
-    right_speed = linear + angular
-
-    rospy.loginfo(f"Left speed: {left_speed:.2f}")
-    rospy.loginfo(f"Right speed: {right_speed:.2f}")
-
-    set_motor_left(left_speed)
-    set_motor_right(right_speed)
+        rospy.loginfo("Motor driver initialized")
+        rospy.spin()
 
 
-def shutdown():
-    rospy.loginfo("Stopping motors...")
+    # =========================
+    # MOTOR OUTPUT
+    # =========================
+    def set_motor_left(self, speed: float):
+        pulse = int(1000000 * speed)
 
-    # neutral signal
-    pi.set_servo_pulsewidth(PIN_LEFT, PWM_STOP)
-    pi.set_servo_pulsewidth(PIN_RIGHT, PWM_STOP)
-
-    # PWM off
-    pi.set_servo_pulsewidth(PIN_LEFT, 0)
-    pi.set_servo_pulsewidth(PIN_RIGHT, 0)
-
-    pi.stop()
+        self.pi.hardware_PWM(self.pin_left, 10000, pulse)
 
 
-# =========================
-# ROS NODE
-# =========================
-rospy.init_node("motor_driver")
-rospy.Subscriber("/cmd_vel", Twist, callback, queue_size=10)
-rospy.on_shutdown(shutdown)
+    def set_motor_right(self, speed: float):
+        pulse = int(1000000 * speed)
 
-rospy.loginfo("pigpio motor driver started")
-rospy.spin()
+        self.pi.hardware_PWM(self.pin_right, 10000, pulse)
+
+
+    # =========================
+    # CMD_VEL CALLBACK
+    # =========================
+    def cmd_callback(self, msg: Twist):
+
+        # normalize input to take maximum velocities into consideration
+        linear = min(msg.linear.x / self.max_linear, self.max_linear)
+        angular = min(msg.angular.z / self.max_angular, self.max_angular)
+
+        # Differential drive
+        left_speed = linear - angular
+        right_speed = linear + angular
+
+        rospy.logdebug(f"Left speed: {left_speed:.2f}, Right speed: {right_speed:.2f}")
+
+        self.set_motor_left(left_speed)
+        self.set_motor_right(right_speed)
+
+
+    # =========================
+    # SHUTDOWN
+    # =========================
+    def shutdown(self):
+        rospy.loginfo("Stopping motors...")
+
+        # neutral signal
+        self.pi.set_servo_pulsewidth(self.pin_left, self.pwm_stop)
+        self.pi.set_servo_pulsewidth(self.pin_right, self.pwm_stop)
+
+        # PWM off
+        self.pi.set_servo_pulsewidth(self.pin_left, 0)
+        self.pi.set_servo_pulsewidth(self.pin_right, 0)
+
+        self.pi.stop()
+
+if __name__ == "__main__":
+    rospy.init_node("motor_driver")
+    MotorDriver()
+    rospy.spin()
