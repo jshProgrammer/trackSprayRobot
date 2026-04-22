@@ -13,6 +13,7 @@ motor_driver:
   pwm_max_bwd: 1000
 
   motor_frequency: 10000
+  wheel_base: 0.445
 
   # =========================
   # DRIVE LIMITS

@@ -18,6 +18,7 @@ class MotorDriver:
         self.pwm_max_bwd = rospy.get_param("~pwm_max_bwd")
 
         self.motor_frequency = rospy.get_param("~motor_frequency")
+        self.wheel_base = rospy.get_param("~wheel_base")
 
         self.max_linear  = rospy.get_param("~max_linear")
         self.max_angular = rospy.get_param("~max_angular")
@@ -66,8 +67,8 @@ class MotorDriver:
         angular = max(min(msg.angular.z / self.max_angular, self.max_angular), 0)
 
         # Differential drive
-        left_speed = linear - angular
-        right_speed = linear + angular
+        left_speed = linear - (angular * self.wheel_base / 2)
+        right_speed = linear + (angular * self.wheel_base / 2)
 
         rospy.logdebug(f"Left speed: {left_speed:.2f}, Right speed: {right_speed:.2f}")
 
