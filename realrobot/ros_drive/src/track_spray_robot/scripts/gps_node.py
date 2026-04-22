@@ -23,64 +23,68 @@ def gps_publisher():
         return
 
     while not rospy.is_shutdown():
-        line = ser.readline().decode('ascii', errors='replace')
-        if line.startswith('$GNGGA'):
-            
-            msg = pynmea2.parse(line)
-
-            fix = NavSatFix()
-            fix.header.stamp = rospy.Time.now()
-            fix.header.frame_id = frame_id
+        try: 
+            line = ser.readline().decode('ascii', errors='replace')
+            if line.startswith('$GNGGA'):
                 
-            # =========================
-            # GPS QUALITY (RTK STATUS)
-            # =========================
-            gps_qual = int(msg.gps_qual)
+                msg = pynmea2.parse(line)
 
-            # Mapping RTK Status
-            if gps_qual == 4:
-                fix.status.status = NavSatStatus.STATUS_FIX  # RTK FIX
-                rospy.loginfo_throttle(1, "RTK FIX (cm-level)")
+                fix = NavSatFix()
+                fix.header.stamp = rospy.Time.now()
+                fix.header.frame_id = frame_id
+                    
+                # =========================
+                # GPS QUALITY (RTK STATUS)
+                # =========================
+                gps_qual = int(msg.gps_qual)
 
-            elif gps_qual == 5:
-                fix.status.status = NavSatStatus.STATUS_SBAS_FIX  # RTK FLOAT
-                rospy.logwarn_throttle(1, "RTK FLOAT")
+                # Mapping RTK Status
+                if gps_qual == 4:
+                    fix.status.status = NavSatStatus.STATUS_FIX  # RTK FIX
+                    rospy.loginfo_throttle(1, "RTK FIX (cm-level)")
 
-            elif gps_qual > 0:
-                fix.status.status = NavSatStatus.STATUS_FIX
-            else:
-                fix.status.status = NavSatStatus.STATUS_NO_FIX
-                rospy.logwarn_throttle(5, "No GPS Fix")
-                continue
+                elif gps_qual == 5:
+                    fix.status.status = NavSatStatus.STATUS_SBAS_FIX  # RTK FLOAT
+                    rospy.logwarn_throttle(1, "RTK FLOAT")
 
-            # =========================
-            # POSITION
-            # =========================
-            fix.latitude = float(msg.latitude)
-            fix.longitude = float(msg.longitude)
-            fix.altitude = float(msg.altitude) if msg.altitude else 0.0
+                elif gps_qual > 0:
+                    fix.status.status = NavSatStatus.STATUS_FIX
+                else:
+                    fix.status.status = NavSatStatus.STATUS_NO_FIX
+                    rospy.logwarn_throttle(5, "No GPS Fix")
+                    continue
 
-            # =========================
-            # COVARIANCE (RTK important!)
-            # =========================
-            fix.position_covariance = [0.0] * 9
+                # =========================
+                # POSITION
+                # =========================
+                fix.latitude = float(msg.latitude)
+                fix.longitude = float(msg.longitude)
+                fix.altitude = float(msg.altitude) if msg.altitude else 0.0
 
-            if gps_qual == 4:
-                fix.position_covariance[0] = 0.01  # ~cm precision
-            elif gps_qual == 5:
-                fix.position_covariance[0] = 0.1   # float
-            else:
-                fix.position_covariance[0] = 5.0   # normal GPS
+                # =========================
+                # COVARIANCE (RTK important!)
+                # =========================
+                fix.position_covariance = [0.0] * 9
 
-            fix.position_covariance_type = NavSatFix.COVARIANCE_TYPE_APPROXIMATED
+                if gps_qual == 4:
+                    fix.position_covariance[0] = 0.01  # ~cm precision
+                elif gps_qual == 5:
+                    fix.position_covariance[0] = 0.1   # float
+                else:
+                    fix.position_covariance[0] = 5.0   # normal GPS
 
-            # =========================
-            # PUBLISH
-            # =========================
-            pub.publish(fix)
+                fix.position_covariance_type = NavSatFix.COVARIANCE_TYPE_APPROXIMATED
 
-            #rospy.logwarn_throttle(10, "Warte auf GPS-Fix...")
-            #except pynmea2.ParseError:
+                # =========================
+                # PUBLISH
+                # =========================
+                pub.publish(fix)
+
+        except pynmea2.ParseError:
+            continue
+    
+        except Exception as e:
+            rospy.logerr_throttle(5, f"GPS Error: {e}")
 
 if __name__ == '__main__':
     try:
