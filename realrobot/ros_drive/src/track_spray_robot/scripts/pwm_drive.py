@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import rospy
 from geometry_msgs.msg import Twist
+from std_msgs.msg import Empty
+import time
 import pigpio
 
 class MotorDriver:
@@ -12,6 +14,7 @@ class MotorDriver:
         # =========================
         self.pin_left  = rospy.get_param("~pin_left")
         self.pin_right = rospy.get_param("~pin_right")
+        self.pin_spray = rospy.get_param("~pin_spray")
 
         self.pwm_stop    = rospy.get_param("~pwm_stop")
         self.pwm_max_fwd = rospy.get_param("~pwm_max_fwd")
@@ -31,21 +34,26 @@ class MotorDriver:
         if not self.pi.connected:
             raise RuntimeError("pigpio daemon not running -> sudo pigpiod")
         
+        self.pi.hardware_PWM(self.pin_right, self.motor_frequency, 0)
+        self.pi.hardware_PWM(self.pin_left, self.motor_frequency, 0)
+        self.pi.set_servo_pulsewidth(self.pin_spray, 0)
+        
         # =========================
         # ROS NODE
         # =========================
         rospy.Subscriber("/cmd_vel", Twist, self.cmd_callback, queue_size=10)
+        rospy.Subscriber("/cmd_spray", Empty, self.spray_callback, queue_size=1)
         rospy.on_shutdown(self.shutdown)
 
         rospy.loginfo("Motor driver initialized")
-        rospy.spin()
+        #rospy.spin()
 
 
     # =========================
     # MOTOR OUTPUT
     # =========================
     def set_motor_left(self, speed: float):
-        pulse = int(1000000 * speed)
+        pulse = int(1000000 * speed)    # 1kHz - 20 kHz
 
         self.pi.hardware_PWM(self.pin_left, self.motor_frequency, pulse)
 
@@ -54,6 +62,24 @@ class MotorDriver:
         pulse = int(1000000 * speed)
 
         self.pi.hardware_PWM(self.pin_right, self.motor_frequency, pulse)
+
+    def set_servo_angle(self, angle):
+        angle = max(0, min(270, angle))
+        pulsewidth = 500 + (angle * (2000.0/270.0))
+        self.pi.set_servo_pulsewidth(self.pin_spray, int(pulsewidth))
+
+    def spray(self):
+        rospy.loginfo("Spray")
+        self.set_servo_angle(100)
+        time.sleep(0.7)
+        self.set_servo_angle(150)
+        time.sleep(0.7)
+        self.set_servo_angle(100)
+        time.sleep(0.7)
+        self.pi.set_servo_pulsewidth(self.pin_spray, 0)
+
+    def cmd_callback(self, msg: Empty):
+        self.spray()
 
 
     # =========================
@@ -86,12 +112,13 @@ class MotorDriver:
         rospy.loginfo("Stopping motors...")
 
         # neutral signal
-        self.pi.set_servo_pulsewidth(self.pin_left, self.pwm_stop)
-        self.pi.set_servo_pulsewidth(self.pin_right, self.pwm_stop)
+        #self.pi.set_servo_pulsewidth(self.pin_left, self.pwm_stop)
+        #self.pi.set_servo_pulsewidth(self.pin_right, self.pwm_stop)
 
         # PWM off
-        self.pi.set_servo_pulsewidth(self.pin_left, 0)
-        self.pi.set_servo_pulsewidth(self.pin_right, 0)
+        self.pi.hardwarePWM(self.pin_left, self.motor_frequency, 0)
+        self.pi.hardwarePWM(self.pin_right, self.motor_frequency, 0)
+        self.pi.set_servo_pulsewidth(self.pin_spray, 0)
 
         self.pi.stop()
 

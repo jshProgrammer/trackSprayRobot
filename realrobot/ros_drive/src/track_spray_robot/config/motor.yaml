@@ -2,8 +2,9 @@ motor_driver:
   # =========================
   # GPIO PINS
   # =========================
-  pin_left: 18
-  pin_right: 13
+  pin_left: 18  # PIN 12
+  pin_right: 13 # PIN 33
+  pin_spray: 12 # PIN 32
 
   # =========================
   # ESC PWM SETTINGS (µs)
