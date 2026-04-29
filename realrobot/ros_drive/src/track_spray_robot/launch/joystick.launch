@@ -1,14 +1,4 @@
 <launch>
-      <rosparam file="$(find track_spray_robot)/config/motor.yaml" command="load"/>
-      <rosparam file="$(find track_spray_robot)/config/rtk_credentials.yaml" command="load"/>
-      
-      <node name="motor_driver" pkg="track_spray_robot" type="pwm_drive.py"
-            output="screen"/>
-      <node name="ntrip_client" pkg="track_spray_robot" type="ntrip_client.py" output="screen"/>
-      <!-- This node only publishes the gps information on /gps/fix !!!-->
-      <node name="gps_node" pkg="track_spray_robot" type="gps_node.py"
-            output="screen"/>
-
 	<node pkg="joy" type="joy_node" name="joy_node">
 		<param name="device_id"       value="0"/>
 		<param name="deadzone"        value="0.1"/>
@@ -23,6 +13,4 @@
 		<param name="enable_turbo_button"   value="5"/>  <!-- R1 = Turbo -->
         <remap from="cmd_vel" to="/cmd_vel"/>
 	</node>
- 
-      
 </launch>
