@@ -70,15 +70,15 @@ class MotorDriver:
 
     def spray(self):
         rospy.loginfo("Spray")
-        self.set_servo_angle(100)
-        time.sleep(0.7)
         self.set_servo_angle(150)
-        time.sleep(0.7)
-        self.set_servo_angle(100)
+        time.sleep(0.15)
+        self.set_servo_angle(120)
+        time.sleep(0.15)
+        self.set_servo_angle(150)
         time.sleep(0.7)
         self.pi.set_servo_pulsewidth(self.pin_spray, 0)
 
-    def cmd_callback(self, msg: Empty):
+    def spray_callback(self, msg: Empty):
         self.spray()
 
 
@@ -116,8 +116,8 @@ class MotorDriver:
         #self.pi.set_servo_pulsewidth(self.pin_right, self.pwm_stop)
 
         # PWM off
-        self.pi.hardwarePWM(self.pin_left, self.motor_frequency, 0)
-        self.pi.hardwarePWM(self.pin_right, self.motor_frequency, 0)
+        self.pi.hardware_PWM(self.pin_left, self.motor_frequency, 0)
+        self.pi.hardware_PWM(self.pin_right, self.motor_frequency, 0)
         self.pi.set_servo_pulsewidth(self.pin_spray, 0)
 
         self.pi.stop()

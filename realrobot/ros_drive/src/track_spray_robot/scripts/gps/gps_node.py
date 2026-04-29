@@ -7,6 +7,7 @@ from sensor_msgs.msg import NavSatFix, NavSatStatus
 def gps_publisher():
     # Initialisiere den ROS Node
     pub = rospy.Publisher('gps/fix', NavSatFix, queue_size=10)
+    unfixed_pub = rospy.Publisher('gps/unfixed', NavSatFix, queue_size=10)
     rospy.init_node('lc29h_driver', anonymous=True)
 
     port = rospy.get_param("~port", "/dev/ttyUSB0")
@@ -37,6 +38,20 @@ def gps_publisher():
                 # GPS QUALITY (RTK STATUS)
                 # =========================
                 gps_qual = int(msg.gps_qual)
+
+                unfixed  = NavSatFix()
+                unfixed.header.stamp = rospy.Time.now()
+                unfixed.header.frame_id = frame_id
+
+                unfixed.latitude = float(msg.latitude)
+                unfixed.longitude = float(msg.longitude)
+                unfixed.altitude = float(msg.altitude) if msg.altitude else 0.0
+
+                unfixed.status.status = NavSatStatus.STATUS_NO_FIX
+                unfixed.status.service = NavSatStatus.SERVICE_GPS
+
+                unfixed_pub.publish(unfixed)    
+                
 
                 # Mapping RTK Status
                 if gps_qual == 4:

@@ -1,13 +1,14 @@
-"""
-This node is responsible for RTK 
-"""
-
 #!/usr/bin/env python3
 import rospy
 import socket
 import base64
 import time
 import threading
+
+"""
+This node is responsible for RTK 
+"""
+
 
 
 class NTRIPClient:
@@ -107,7 +108,10 @@ class NTRIPClient:
                     continue
 
             try:
+                start = time.time()
                 data = sock.recv(4096)
+                rospy.loginfo(f"RX bytes: {len(data)} in {time.time()-start:.2f}s")
+                #data = sock.recv(4096)
 
                 if not data:
                     raise ConnectionError("Leere Daten vom Caster")
@@ -115,11 +119,14 @@ class NTRIPClient:
                 # RTCM direkt an GPS schicken
                 self.ser.write(data)
 
-            except Exception as e:
-                rospy.logerr(f"NTRIP lost connection: {e}")
-                sock.close()
-                sock = None
-                time.sleep(self.reconnect_interval)
+            except socket.timeout:
+                rospy.logwarn("NTRIP timeout (no data received)")
+                continue
+            #except Exception as e:
+            #    rospy.logerr(f"NTRIP lost connection: {e}")
+            #    sock.close()
+            #    sock = None
+            #    time.sleep(self.reconnect_interval)
 
     # =========================
     # SHUTDOWN
