@@ -41,7 +41,7 @@ class MotorDriver:
         # =========================
         # ROS NODE
         # =========================
-        rospy.Subscriber("/cmd_vel", Twist, self.cmd_callback, queue_size=10)
+        rospy.Subscriber("/cmd_vel", Twist, self.cmd_callback, queue_size=1)
         rospy.Subscriber("/cmd_spray", Empty, self.spray_callback, queue_size=1)
         rospy.on_shutdown(self.shutdown)
 

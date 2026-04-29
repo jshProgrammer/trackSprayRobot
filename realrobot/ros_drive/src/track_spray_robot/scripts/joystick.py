@@ -13,6 +13,10 @@ class JoyToCmdVel:
         self.spray_pub = rospy.Publisher("/cmd_spray", Empty, queue_size=1)
         rospy.Subscriber("/joy", Joy, self.callback)
 
+        self.last_spray_state = 0
+        self.last_spray_time = rospy.Time(0)
+        self.debounce_time = rospy.Duration(0.3)
+
         self.max_linear = rospy.get_param("~max_linear", 0.5)
         self.max_angular = rospy.get_param("~max_angular", 1.0)
 
@@ -42,9 +46,23 @@ class JoyToCmdVel:
 
         self.pub.publish(twist)
 
-        spray = buttons[1]
-        if spray == 1:
-            self.spray_pub.publish()
+        # add timestamp (entprellen)
+
+        now = rospy.Time.now()
+        spray = buttons[1]        
+
+        if spray == 1 and self.last_spray_state == 0:
+
+            # --------------------------
+            # Debounce via timestamp
+            # --------------------------
+            if now - self.last_spray_time > self.debounce_time:
+                self.spray_pub.publish()
+
+                self.last_spray_time = now
+
+        self.last_spray_state = spray
+
 
 if __name__ == "__main__":
     JoyToCmdVel()
