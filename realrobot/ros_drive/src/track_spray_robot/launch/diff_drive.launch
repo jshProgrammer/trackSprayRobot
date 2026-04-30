@@ -8,10 +8,10 @@
 
 
 	<!-- GPS and RTK nodes-->
+	<!-- This node only publishes the gps information on /gps/fix and does not print out any coordinates! !!!-->
+	<node name="gps_node" pkg="track_spray_robot" type="gps_node.py"
+		output="screen"/>
 	<node name="ntrip_client" pkg="track_spray_robot" type="ntrip_client.py" output="screen"/>
-	<!-- This node only publishes the gps information on /gps/fix !!!-->
-	<!--<node name="gps_node" pkg="track_spray_robot" type="gps_node.py"
-		output="screen"/>-->
 
 	<!-- Joystick nodes-->
 	<node pkg="joy" type="joy_node" name="joy_node">
