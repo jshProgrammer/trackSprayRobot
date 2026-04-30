@@ -25,14 +25,15 @@ Develop a mobile robot that:
 
 -   Autonomously navigates on asphalt
 -   Sprays track markings using spray chalk
--   Avoids obstacles
 -   Can be configured via App/Web interface
+-   Avoids obstacles (marked via GUI)
 -   Reports live status information
 -   Operates for \~40 minutes per discipline
--   Is robust against outdoor conditions (heat, light rain, uneven
+-   Is robust against outdoor conditions (heat, uneven
     ground)
+-   Can be controlled using a PlayStation Controller for manual testing
 
-The system will be implemented using **ROS2** on embedded hardware
+The system will be implemented using **ROS Noetic** on embedded hardware
 (Raspberry Pi).
 
 ------------------------------------------------------------------------
@@ -41,7 +42,7 @@ The system will be implemented using **ROS2** on embedded hardware
 
 The system consists of three major domains:
 
-1.  Robot Software (ROS2)
+1.  Robot Software (ROS Noetic)
 2.  Backend / Communication Layer
 3.  Frontend (Web/App Interface)
 
@@ -55,7 +56,6 @@ The system consists of three major domains:
 -   Sensor Integration
 -   Localization (RTK + IMU + Encoder Fusion)
 -   Path Planning
--   Obstacle Detection (LiDAR + Ultrasonic)
 -   Spray Actuator Control
 -   Status Monitoring
 -   Battery Monitoring
@@ -70,12 +70,12 @@ The system consists of three major domains:
 -   Discipline Templates (Acceleration, Skid Pad, etc.)
 -   Remote Robot Connection
 -   Live Status Dashboard
--   Obstacle Marking via UI (optional)
+-   Obstacle Marking via UI
 -   Spray Level Monitoring Display
 
 ------------------------------------------------------------------------
 
-# 🤖 Robot Architecture (ROS2)
+# 🤖 Robot Architecture (ROS Noetic)
 
 The robot is based on a **Differential Drive** system.
 
@@ -84,18 +84,16 @@ The robot is based on a **Differential Drive** system.
 -   RTK GPS
 -   IMU
 -   Wheel Encoders
--   LiDAR (360° obstacle detection)
 
 ### Actuators
 
 -   BLDC Motors
 -   Motor Controller
 -   Spray Actuator (PWM controlled)
--   Adjustable Spray Pressure
 
 ### Compute
 
--   Raspberry Pi 4B
+-   Raspberry Pi 4B with Ubuntu 20.04, optionally connected via ssh/tailscale
 
 ------------------------------------------------------------------------
 
@@ -104,27 +102,28 @@ The robot is based on a **Differential Drive** system.
     trackSprayRobot/
     │
     ├── README.md
+    ├── .gitignore
     │
-    ├── robot/                         # ROS2 Workspace
+    ├── realrobot/ros_drive              # final ROS Noetic Workspace
     │   ├── src/
-    │   │   ├── hardware_interface/
-    │   │   ├── localization/
-    │   │   ├── path_planning/
-    │   │   ├── obstacle_detection/
-    │   │   ├── spray_controller/
-    │   │   ├── mission_manager/
-    │   │   └── status_monitor/
-    │   │
-    │   ├── launch/
-    │   └── config/
+    │   │   ├── track_spray_robot/
+    │   │   │   ├── config/
+    │   │   │   ├── launch/
+    │   │   │   ├── scripts/
+    │   │   │   │   ├── gps/
     │
-    ├── backend/
+    ├── calculations/                   # Prototype-Calculations for navigation
+    │
+    ├── sensors/                        # Packages to test sensors individually
+    │   ├── GPS_Sensor/
+    │
+    ├── backend/                        # TO BE DONE
     │   ├── api/
     │   ├── websocket_server/
     │   ├── robot_gateway/
     │   └── data_models/
     │
-    ├── frontend/
+    ├── frontend/                       # TO BE DONE
     │   ├── web-app/
     │   │   ├── components/
     │   │   ├── map/
@@ -133,19 +132,34 @@ The robot is based on a **Differential Drive** system.
     │   │
     │   └── mobile-app/ (optional)
     │
-    ├── shared/
+    ├── shared/                         # TO BE DONE
     │   ├── map_models/
     │   └── communication_interfaces/
     │
-    ├── docs/
+    ├── docs/                           # TO BE DONE
     │   ├── architecture/
     │   ├── hardware/
     │   ├── requirements/
     │   └── diagrams/
     │
-    └── simulations/
-        ├── gazebo/
-        └── test_tracks/
+    └── simulations/                    # Robot simulations using Gazebo
+        ├── ros_lidar_simulation/
+        └── ros_lidar_simulation_Navigation/
+        └── ros_lidar_simulation_Trackspray/
+
+
+
+In future extension, the different scripts might be divided into individual packages depending on their responsibility, e.g.
+
+    trackSprayRobot/
+    ├── robot/     
+    │   ├── src/
+    │   │   ├── hardware_interface/
+    │   │   ├── localization/
+    │   │   ├── path_planning/
+    │   │   ├── spray_controller/
+    │   │   ├── mission_manager/
+    │   │   └── status_monitor/
 
 ------------------------------------------------------------------------
 
@@ -153,7 +167,7 @@ The robot is based on a **Differential Drive** system.
 
 -   REST API for configuration
 -   WebSocket for live updates
--   ROS2 Topics/Services internally
+-   ROS Noetic Topics/Services internally
 -   JSON / Protobuf message formats (TBD)
 
 ------------------------------------------------------------------------
@@ -162,32 +176,26 @@ The robot is based on a **Differential Drive** system.
 
 -   Current position
 -   Battery level
--   Spray fill level
+-   Estimated Spray fill level
 -   Mission progress (%)
 -   Current discipline
--   Obstacle detected warning
 -   Error states
 
 ------------------------------------------------------------------------
 
 # 🧪 Simulation & Testing
 
--   Gazebo Simulation (ROS2)
+-   Gazebo Simulation (ROS Noetic)
 -   Virtual test tracks
--   Hardware-in-the-loop tests
 -   Field testing on asphalt
 
 ------------------------------------------------------------------------
 
 # 🚀 Optional / Future Features
 
+-   Obstacle Detection via LiDAR
 -   Automatic discipline generator
--   AI-based obstacle classification
--   Cloud logging and analytics
 -   Track optimization algorithm
--   Weather-adaptive spray control
--   Manual override mode via controller
--   Autonomous cone placement module (long-term vision)
 
 ------------------------------------------------------------------------
 
@@ -196,7 +204,7 @@ The robot is based on a **Differential Drive** system.
 -   Outdoor capable
 -   40 min runtime minimum
 -   Modular architecture
--   ROS2-based
+-   ROS Noetic-based
 -   Easy maintenance
 -   Scalable software architecture
 -   Fault-tolerant mission execution
