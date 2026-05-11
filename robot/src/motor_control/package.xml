@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <package format="2">
-  <name>track_spray_robot</name>
+  <name>motor_control</name>
   <version>0.0.1</version>
   <description>Track Spray Robot Simulation with LiDAR-based obstacle recognition</description>
 
@@ -23,9 +23,7 @@
   <build_depend>gazebo_plugins</build_depend>
   <build_depend>robot_state_publisher</build_depend>
   <build_depend>tf</build_depend>
-  <build_depend>message_generation</build_depend>
-
-  <exec_depend>message_runtime</exec_depend>
+ 
   <exec_depend>rospy</exec_depend>
   <exec_depend>roscpp</exec_depend>
   <exec_depend>std_msgs</exec_depend>

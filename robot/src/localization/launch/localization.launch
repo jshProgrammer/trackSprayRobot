@@ -1,0 +1,9 @@
+<launch>
+    <rosparam file="$(find localization)/config/rtk_credentials.yaml" command="load"/>
+
+    <!-- GPS and RTK nodes-->
+	<!-- This node only publishes the gps information on /gps/fix and does not print out any coordinates! !!!-->
+	<node name="gps_node" pkg="localization" type="gps_node.py"
+		output="screen"/>
+	<node name="ntrip_client" pkg="localization" type="ntrip_client.py" output="screen"/>
+</launch>

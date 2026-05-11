@@ -3,7 +3,7 @@
 import rospy
 from std_msgs.msg import Empty
 import os
-from track_spray_robot.msg import EmergencyReset
+from teleop.msg import EmergencyReset
 
 class EmergencyHandler:
     def __init__(self):
@@ -23,7 +23,7 @@ class EmergencyHandler:
     def hard_stop(self):
         rospy.logfatal("❌ HARD EMERGENCY STOP - KILLING EVERYTHING!")
         
-        os.system("pkill -f 'pwm_drive.py|joy_node|teleop_node|joystick.py|ntrip_client' &")
+        os.system("pkill -f 'pwm_drive.py|joy_node|teleop_node|joystick.py|ntrip_client|gps_node.py' &")
         
         rospy.signal_shutdown("Hard emergency stop")
 

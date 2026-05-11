@@ -93,9 +93,50 @@ The robot is based on a **Differential Drive** system.
 
 ### Compute
 
--   Raspberry Pi 4B with Ubuntu 20.04, optionally connected via ssh/tailscale
+- Raspberry Pi 4B
+- Ubuntu 20.04
+- ROS Noetic
+- Optional remote access via SSH / Tailscale
 
 ------------------------------------------------------------------------
+
+# 📦 ROS Package Structure
+
+The robot software is organized into modular ROS packages.
+
+```text
+robot/
+├── bringup/              # Central launch package
+├── motor_control/        # PWM control and motor drivers
+├── localization/         # GPS, RTK, NTRIP and localization nodes
+├── teleop/               # Joystick control and emergency stop
+```
+
+## 🚀 Central Launch System
+
+All major robot components can be started together using a centralized
+bringup launch file.
+
+### robot.launch
+
+```xml
+<launch>
+    <include file="$(find motor_control)/launch/motor.launch"/>
+    <include file="$(find localization)/launch/gps.launch"/>
+    <include file="$(find teleop)/launch/teleop.launch"/>
+</launch>
+```
+
+### Start the complete robot stack
+
+Run from inside the catkin workspace (tracksprayrobot/robot):
+
+```bash
+roslaunch bringup robot.launch
+```
+
+------------------------------------------------------------------------
+
 
 # 🗂️ Project Structure
 

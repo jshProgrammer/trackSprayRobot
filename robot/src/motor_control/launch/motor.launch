@@ -1,0 +1,8 @@
+<launch>
+    <rosparam file="$(find motor_control)/config/motor.yaml" command="load"/>
+	
+	<!-- Motor node -->
+	<node name="motor_driver" pkg="motor_control" type="pwm_drive.py"
+		output="screen" respawn="true" respawn_delay="1"/>
+
+</launch>

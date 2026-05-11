@@ -4,7 +4,7 @@ import rospy
 from sensor_msgs.msg import Joy
 from geometry_msgs.msg import Twist
 from std_msgs.msg import Empty
-from track_spray_robot.msg import EmergencyReset
+from teleop.msg import EmergencyReset
 
 
 class JoyToCmdVel:
