@@ -34,6 +34,7 @@ class LC29HDriver:
     # Publisher initialization
     # =========================
     def _init_publishers(self):
+        #TODO: probably only use gps in the futures (with fixed and unfixed together), and then just filter
         self.pub         = rospy.Publisher('gps/fix',           NavSatFix, queue_size=10)
         # unfixed publisher will probably be removed in the future!
         self.unfixed_pub = rospy.Publisher('gps/unfixed',       NavSatFix, queue_size=10)
