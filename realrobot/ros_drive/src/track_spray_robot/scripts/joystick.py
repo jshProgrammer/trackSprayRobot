@@ -41,8 +41,10 @@ class JoyToCmdVel:
         # -1.0 -> 1 (voll gedrückt)
         # -------------------
         r2 = axes[4]
-        gas = (1.0 - r2) / 2.0
-        twist.linear.x = gas * self.max_linear
+
+        if r2 != 0:
+            gas = (1.0 - r2) / 2.0
+            twist.linear.x = gas * self.max_linear
 
         self.pub.publish(twist)
 
