@@ -2,8 +2,8 @@
 import rospy
 import serial
 import pynmea2
-from sensor_msgs.msg import NavSatFix, NavSatStatus, String
-from std_msgs.msg import ByteMultiArray
+from sensor_msgs.msg import NavSatFix, NavSatStatus
+from std_msgs.msg import ByteMultiArray, String
 
 class LC29HDriver:
     def __init__(self):
