@@ -12,7 +12,7 @@ import time
 import threading
 
 import rospy
-from std_msgs.msg import String, ByteMultiArray
+from std_msgs.msg import String, UInt8MultiArray
 
 version    = 0.2
 useragent  = "NTRIP JCMBsoftPythonClient/%.1f" % version
@@ -49,7 +49,7 @@ class NtripClientNode:
         # Setting up subscriber and receiver
         # =========================
         self.rtcm_pub = rospy.Publisher(
-            'gps/rtcm', ByteMultiArray, queue_size=10
+            'gps/rtcm', UInt8MultiArray, queue_size=10
         ) # sending to gps node
 
         rospy.Subscriber('gps/nmea_sentence', String, self._nmea_callback) # receiving from gps node
@@ -118,7 +118,7 @@ class NtripClientNode:
 
     # ------------------------------------------------------------------
     def _publish_rtcm(self, data: bytes):
-        msg = ByteMultiArray()
+        msg = UInt8MultiArray()
         msg.data = list(data)
         self.rtcm_pub.publish(msg)
 

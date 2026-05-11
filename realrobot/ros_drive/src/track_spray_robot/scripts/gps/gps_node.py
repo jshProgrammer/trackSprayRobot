@@ -3,7 +3,7 @@ import rospy
 import serial
 import pynmea2
 from sensor_msgs.msg import NavSatFix, NavSatStatus
-from std_msgs.msg import ByteMultiArray, String
+from std_msgs.msg import UInt8MultiArray, String
 
 class LC29HDriver:
     def __init__(self):
@@ -41,7 +41,7 @@ class LC29HDriver:
         self.nmea_pub    = rospy.Publisher('gps/nmea_sentence', String,    queue_size=10)
  
     def _init_subscribers(self):
-        rospy.Subscriber('gps/rtcm', ByteMultiArray, self._rtcm_callback)
+        rospy.Subscriber('gps/rtcm', UInt8MultiArray, self._rtcm_callback)
  
     # =========================
     # RTCM Callback (for NTRIP Client / RTK)
@@ -73,44 +73,43 @@ class LC29HDriver:
         fix = NavSatFix()
         fix.header.stamp    = rospy.Time.now()
         fix.header.frame_id = self.frame_id
- 
-        # =========================
+
         # GPS QUALITY (RTK STATUS)
-        # =========================
         if gps_qual == 4:
-            fix.status.status = NavSatStatus.STATUS_FIX       # RTK FIX
+            fix.status.status = NavSatStatus.STATUS_FIX
             rospy.loginfo_throttle(1, "RTK FIX (cm-level)")
         elif gps_qual == 5:
-            fix.status.status = NavSatStatus.STATUS_SBAS_FIX  # RTK FLOAT
+            fix.status.status = NavSatStatus.STATUS_SBAS_FIX
             rospy.logwarn_throttle(1, "RTK FLOAT")
-        elif gps_qual > 0:
+        elif gps_qual == 2:
             fix.status.status = NavSatStatus.STATUS_FIX
+            rospy.loginfo_throttle(5, "DGPS FIX")
+        elif gps_qual == 1:
+            fix.status.status = NavSatStatus.STATUS_FIX
+            rospy.loginfo_throttle(5, "GPS FIX")
         else:
             fix.status.status = NavSatStatus.STATUS_NO_FIX
             rospy.logwarn_throttle(5, "No GPS Fix")
             return None
- 
-        # =========================
-        # POSITION
-        # =========================
+
         fix.latitude  = float(msg.latitude)
         fix.longitude = float(msg.longitude)
         fix.altitude  = float(msg.altitude) if msg.altitude else 0.0
- 
-        # =========================
-        # COVARIANCE (RTK important!)
-        # =========================
+
         fix.position_covariance = [0.0] * 9
- 
         if gps_qual == 4:
-            fix.position_covariance[0] = 0.01  # ~cm precision
+            fix.position_covariance[0] = 0.01  # RTK FIX: ~cm precision
         elif gps_qual == 5:
-            fix.position_covariance[0] = 0.1   # float
+            fix.position_covariance[0] = 0.1   # RTK FLOAT
+        elif gps_qual == 2:
+            fix.position_covariance[0] = 1.0   # DGPS
         else:
-            fix.position_covariance[0] = 5.0   # normal GPS
- 
+            fix.position_covariance[0] = 5.0   # GPS
+
+        rospy.loginfo(f"GPS Qual: {gps_qual}")
+
         fix.position_covariance_type = NavSatFix.COVARIANCE_TYPE_APPROXIMATED
- 
+
         return fix
  
     def _process_line(self, line: str):
