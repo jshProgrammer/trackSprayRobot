@@ -4,6 +4,8 @@ import rospy
 from sensor_msgs.msg import Joy
 from geometry_msgs.msg import Twist
 from std_msgs.msg import Empty
+from track_spray_robot.msg import EmergencyReset
+
 
 class JoyToCmdVel:
     def __init__(self):
@@ -12,9 +14,7 @@ class JoyToCmdVel:
         self.cmd_pub = rospy.Publisher("/cmd_vel", Twist, queue_size=10)
         self.spray_pub = rospy.Publisher("/cmd_spray", Empty, queue_size=1)
 
-        #TODO: make one publisher with boolean
-        self.emergency_pub = rospy.Publisher("/emergency_stop", Empty, queue_size=1)
-        self.soft_reset_pub = rospy.Publisher("/soft_reset", Empty, queue_size=1)
+        self.reset_pub = rospy.Publisher("/emergency_reset", EmergencyReset, queue_size=1)
 
         rospy.Subscriber("/joy", Joy, self.callback)
 
@@ -71,22 +71,22 @@ class JoyToCmdVel:
         self.last_spray_state = spray
 
         # -------------------
-        # Notstop (L2 = axis[3])
+        # Notstop (L2 = axis[3]) = HARD RESET (kill all nodes)
         # 1.0 -> 0 (nicht gedrückt)
         # -1.0 -> 1 (voll gedrückt)
         # -------------------
         l2 = axes[3]
 
         if l2 == 1:
-            self.emergency_pub.publish()
+            self.reset_pub.publish(EmergencyReset(is_soft=False))
 
         # -------------------
-        # L1 (button[4]) = SOFT RESET (nur motor restart)
+        # L1 (button[4]) = SOFT RESET (only motor node restarts)
         # -------------------
         l1 = buttons[4]
         if l1 == 1:
             rospy.logwarn("SOFT RESET - restarting motor driver only")
-            self.soft_reset_pub.publish()
+            self.reset_pub.publish(EmergencyReset(is_soft=True))
 
 
 if __name__ == "__main__":

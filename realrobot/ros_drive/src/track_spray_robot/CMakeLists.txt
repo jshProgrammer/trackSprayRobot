@@ -11,9 +11,19 @@ find_package(catkin REQUIRED COMPONENTS
   gazebo_plugins
   robot_state_publisher
   tf
+  message_generation
 )
 
-catkin_package()
+add_message_files(
+  FILES
+  EmergencyReset.msg
+)
+
+generate_messages()
+
+catkin_package(
+  CATKIN_DEPENDS message_runtime rospy
+)
 
 # Installation der Python-Skripte
 catkin_install_python(PROGRAMS

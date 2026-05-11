@@ -3,27 +3,31 @@
 import rospy
 from std_msgs.msg import Empty
 import os
+from track_spray_robot.msg import EmergencyReset
 
 class EmergencyHandler:
     def __init__(self):
         rospy.init_node("emergency_handler", disable_signals=True)
         
         # Hard Stop - kill all
-        rospy.Subscriber("/emergency_stop", Empty, self.hard_stop)
-        
-        # Soft Reset - only restart motor pwm_drive node
-        rospy.Subscriber("/soft_reset", Empty, self.soft_reset)
+        rospy.Subscriber("/emergency_reset", EmergencyReset, self.stop)
         
         rospy.loginfo("Emergency Handler started")
 
-    def hard_stop(self, msg):
+    def stop(self, msg):
+        if msg.is_soft:
+            self.soft_reset()
+        else:
+            self.hard_stop()
+
+    def hard_stop(self):
         rospy.logfatal("❌ HARD EMERGENCY STOP - KILLING EVERYTHING!")
         
         os.system("pkill -f 'pwm_drive.py|joy_node|teleop_node|joystick.py|ntrip_client' &")
         
         rospy.signal_shutdown("Hard emergency stop")
 
-    def soft_reset(self, msg):
+    def soft_reset(self):
         rospy.logwarn("🔄 SOFT RESET - Restarting motor driver only")
         
         # Only kill pwm_drive.py (will be respawned automatically due to launch file)
