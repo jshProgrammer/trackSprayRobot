@@ -1,10 +1,13 @@
 <launch>
     <rosparam file="$(find track_spray_robot)/config/motor.yaml" command="load"/>
 	<rosparam file="$(find track_spray_robot)/config/rtk_credentials.yaml" command="load"/>
+
+	<!-- Emergency node -->
+	<node pkg="track_spray_robot" type="emergency_kill.py" name="emergency_kill" output="screen"/>
 	
 	<!-- Motor node -->
 	<node name="motor_driver" pkg="track_spray_robot" type="pwm_drive.py"
-		output="screen"/>
+		output="screen" respawn="true" respawn_delay="1"/>
 
 
 	<!-- GPS and RTK nodes-->

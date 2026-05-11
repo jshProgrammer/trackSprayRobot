@@ -9,8 +9,13 @@ class JoyToCmdVel:
     def __init__(self):
         rospy.init_node("joy_to_cmdvel")
 
-        self.pub = rospy.Publisher("/cmd_vel", Twist, queue_size=10)
+        self.cmd_pub = rospy.Publisher("/cmd_vel", Twist, queue_size=10)
         self.spray_pub = rospy.Publisher("/cmd_spray", Empty, queue_size=1)
+
+        #TODO: make one publisher with boolean
+        self.emergency_pub = rospy.Publisher("/emergency_stop", Empty, queue_size=1)
+        self.soft_reset_pub = rospy.Publisher("/soft_reset", Empty, queue_size=1)
+
         rospy.Subscriber("/joy", Joy, self.callback)
 
         self.last_spray_state = 0
@@ -46,7 +51,7 @@ class JoyToCmdVel:
             gas = (1.0 - r2) / 2.0
             twist.linear.x = gas * self.max_linear
 
-        self.pub.publish(twist)
+        self.cmd_pub.publish(twist)
 
         # add timestamp (entprellen)
 
@@ -64,6 +69,24 @@ class JoyToCmdVel:
                 self.last_spray_time = now
 
         self.last_spray_state = spray
+
+        # -------------------
+        # Notstop (L2 = axis[3])
+        # 1.0 -> 0 (nicht gedrückt)
+        # -1.0 -> 1 (voll gedrückt)
+        # -------------------
+        l2 = axes[3]
+
+        if l2 == 1:
+            self.emergency_pub.publish()
+
+        # -------------------
+        # L1 (button[4]) = SOFT RESET (nur motor restart)
+        # -------------------
+        l1 = buttons[4]
+        if l1 == 1:
+            rospy.logwarn("SOFT RESET - restarting motor driver only")
+            self.soft_reset_pub.publish()
 
 
 if __name__ == "__main__":
