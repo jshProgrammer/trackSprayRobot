@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- MPU9250 IMU Node Launch File -->
+  
+  <!-- Configuration Parameters -->
+  <arg name="i2c_bus" default="1" doc="I2C bus number (usually 1 for Raspberry Pi)"/>
+  <arg name="publish_rate" default="20" doc="Publish frequency in Hz"/>
+  <arg name="gyro_fsr" default="250" doc="Gyroscope Full Scale Range (250, 500, 1000, 2000 deg/s)"/>
+  <arg name="accel_fsr" default="2" doc="Accelerometer Full Scale Range (2, 4, 8, 16 g)"/>
+  <arg name="frame_id" default="imu_link" doc="TF frame ID for IMU"/>
+  
+  <!-- MPU9250 Node -->
+  <node name="imu_node" pkg="imu" type="imu_node.py" output="screen">
+    <param name="i2c_bus" value="$(arg i2c_bus)"/>
+    <param name="publish_rate" value="$(arg publish_rate)"/>
+    <param name="gyro_fsr" value="$(arg gyro_fsr)"/>
+    <param name="accel_fsr" value="$(arg accel_fsr)"/>
+    <param name="frame_id" value="$(arg frame_id)"/>
+  </node>
+  
+</launch>
