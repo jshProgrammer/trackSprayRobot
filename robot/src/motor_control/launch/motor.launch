@@ -4,10 +4,14 @@
 	<!-- Motor node -->
 	<node name="motor_driver" pkg="motor_control" type="pwm_drive.py"
 		output="screen" respawn="true" respawn_delay="1">
-		<rosparam param="waypoints">
-  - [50.04382, 10.20818]
-  - [50.04380, 10.20833]
+<rosparam param="waypoints">
+- [50.04382, 10.20818]
+- [50.04380, 10.20833]
 </rosparam>
 	</node>
+
+	<!-- TODO: to be extracted to individual package -->
+	<node name="kallmann_filter" pkg="motor_control" type="kallmann_filter.py"
+		output="screen"/>
     
 </launch>

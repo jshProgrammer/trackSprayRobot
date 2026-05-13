@@ -11,7 +11,7 @@ class JoyToCmdVel:
     def __init__(self):
         rospy.init_node("joy_to_cmdvel")
 
-        self.cmd_pub = rospy.Publisher("/cmd_vel", Twist, queue_size=10)
+        self.cmd_pub = rospy.Publisher("/cmd_vel_controll", Twist, queue_size=10)
         self.spray_pub = rospy.Publisher("/cmd_spray", Empty, queue_size=1)
 
         self.reset_pub = rospy.Publisher("/emergency_reset", EmergencyReset, queue_size=1)

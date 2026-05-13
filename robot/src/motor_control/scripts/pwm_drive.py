@@ -99,7 +99,8 @@ class MotorDriver:
 
         rospy.logdebug(f"Left speed: {left_speed:.2f}, Right speed: {right_speed:.2f}")
 
-        self.set_motor_left(1.08 * left_speed)
+        #TODO: remove hardcoded scale factor
+        self.set_motor_left(left_speed)
         self.set_motor_right(right_speed)
     """
 

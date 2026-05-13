@@ -161,6 +161,7 @@ class MPU9250Node:
                 imu_msg.angular_velocity.z = gyro_z
                 
                 # Orientation is not available from raw IMU data (would need fusion)
+                #TODO: add orientation
                 imu_msg.orientation = Quaternion(x=0, y=0, z=0, w=1)
                 
                 # Set covariance (estimate)
