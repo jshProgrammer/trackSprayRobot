@@ -1,10 +1,10 @@
 # MPU9250 ROS Noetic Node
 
-ROS Noetic node for the MPU9250 9-DOF IMU sensor (Accelerometer, Gyroscope, Magnetometer).
+ROS Noetic node for the MPU9250 9-DOF IMU sensor (Accelerometer, Gyroscope).
 
 ## Features
 
-- ✅ Reads Accelerometer, Gyroscope, and Magnetometer data
+- ✅ Reads Accelerometer and Gyroscope data
 - ✅ Automatic unit conversion to SI units (m/s², rad/s)
 - ✅ Configurable sensor ranges
 - ✅ Standard ROS sensor messages
@@ -25,7 +25,7 @@ pip3 install smbus2 mpu9250-jmdev
 sudo i2cdetect -y 1
 ```
 
-You should see the MPU9250 at address `0x68` and the magnetometer at `0x0c`.
+You should see the MPU9250 at address `0x68`. The magnetometer would have `0x0c` so it does not seem to be available.
 
 ### Build ROS Package
 
@@ -40,15 +40,15 @@ source devel/setup.bash
 ### Basic Launch
 
 ```bash
-roslaunch mpu9250_node mpu9250.launch
+roslaunch imu_node imu.launch
 ```
 
 ### With Custom Parameters
 
 ```bash
-roslaunch mpu9250_node mpu9250.launch \
+roslaunch imu_node imu.launch \
   publish_rate:=50 \
-  gyro_fsr:=500 \
+  gyro_fsr:=500 \,
   accel_fsr:=4
 ```
 

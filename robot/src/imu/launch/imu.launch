@@ -10,7 +10,7 @@
   <arg name="frame_id" default="imu_link" doc="TF frame ID for IMU"/>
   
   <!-- MPU9250 Node -->
-  <node name="mpu9250_node" pkg="mpu9250_node" type="mpu9250_node.py" output="screen">
+  <node name="imu_node" pkg="imu" type="imu_node.py" output="screen">
     <param name="i2c_bus" value="$(arg i2c_bus)"/>
     <param name="publish_rate" value="$(arg publish_rate)"/>
     <param name="gyro_fsr" value="$(arg gyro_fsr)"/>
