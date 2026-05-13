@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 ROS Noetic Node for MPU9250 9-DOF IMU Sensor
-Publishes accelerometer, gyroscope, and magnetometer data
+Publishes accelerometer and gyroscope data
 
 Dependencies:
     sudo apt install python3-smbus i2c-tools
@@ -70,6 +70,7 @@ class MPU9250Node:
         
         # Get parameters
         self.i2c_bus = rospy.get_param('~i2c_bus', 1)
+        #TODO: might need higher publish rate!
         self.publish_rate = rospy.get_param('~publish_rate', 20)  # Hz
         self.gyro_fsr = rospy.get_param('~gyro_fsr', 250)  # deg/s
         self.accel_fsr = rospy.get_param('~accel_fsr', 2)  # g
@@ -114,13 +115,10 @@ class MPU9250Node:
             rospy.logerr("  2. Run: sudo i2cdetect -y 1")
             exit(1)
         
-        # Publishers
+        # Publisher
         self.imu_pub = rospy.Publisher('imu/data', Imu, queue_size=10)
-        self.mag_pub = rospy.Publisher('imu/mag', Vector3Stamped, queue_size=10)
         
-        rospy.loginfo("Publishers created. Topics:")
-        rospy.loginfo("  - imu/data (sensor_msgs/Imu)")
-        rospy.loginfo("  - imu/mag (geometry_msgs/Vector3Stamped)")
+        rospy.loginfo("Publisher created. Topic: imu/data (sensor_msgs/Imu)")
     
     def run(self):
         """Main loop to read and publish sensor data"""
@@ -132,7 +130,6 @@ class MPU9250Node:
                 # Read sensor data
                 accel_raw = self.mpu.readAccelerometerMaster()
                 gyro_raw = self.mpu.readGyroscopeMaster()
-                mag_raw = self.mpu.readMagnetometerMaster()
                 
                 # Convert to SI units
                 accel_sensitivity = self.ACCEL_SENSITIVITY[self.accel_fsr]
@@ -171,17 +168,8 @@ class MPU9250Node:
                 imu_msg.angular_velocity_covariance = [0.01] * 9
                 imu_msg.orientation_covariance = [-1] * 9  # -1 means not available
                 
-                # Create magnetometer message
-                mag_msg = Vector3Stamped()
-                mag_msg.header.stamp = rospy.Time.now()
-                mag_msg.header.frame_id = self.frame_id
-                mag_msg.vector.x = mag_raw[0]
-                mag_msg.vector.y = mag_raw[1]
-                mag_msg.vector.z = mag_raw[2]
-                
                 # Publish messages
                 self.imu_pub.publish(imu_msg)
-                self.mag_pub.publish(mag_msg)
                 
                 rate.sleep()
                 

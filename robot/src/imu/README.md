@@ -71,20 +71,13 @@ IMU data including:
 - **angular_velocity**: Angular velocity in rad/s (x, y, z)
 - **orientation**: Quaternion (not available from raw IMU, would need fusion algorithm)
 
-### `/imu/mag` (geometry_msgs/Vector3Stamped)
-
-Magnetometer data in Tesla (or uncalibrated raw units).
-
 ## Viewing Data
 
 ```bash
 # View IMU data
 rostopic echo /imu/data
 
-# View Magnetometer data
-rostopic echo /imu/mag
-
-# Plot data
+# Plot data (not working currently)
 rqt_plot /imu/data/linear_acceleration
 rqt_plot /imu/data/angular_velocity
 ```
@@ -109,7 +102,6 @@ sudo chmod 666 /dev/i2c-1
 ### Wrong values
 - Check sensor orientation
 - Verify I2C addresses match your configuration
-- Consider calibrating the magnetometer
 
 ## Wiring (Raspberry Pi)
 
