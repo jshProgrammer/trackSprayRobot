@@ -12,19 +12,19 @@ class MotorDriver:
         # =========================
         # PARAMETER LOAD
         # =========================
-        self.pin_left  = rospy.get_param("~pin_left")
-        self.pin_right = rospy.get_param("~pin_right")
-        self.pin_spray = rospy.get_param("~pin_spray")
+        self.pin_left  = rospy.get_param("/motor_driver/pin_left")
+        self.pin_right = rospy.get_param("/motor_driver/pin_right")
+        self.pin_spray = rospy.get_param("/motor_driver/pin_spray")
 
-        self.pwm_stop    = rospy.get_param("~pwm_stop")
-        self.pwm_max_fwd = rospy.get_param("~pwm_max_fwd")
-        self.pwm_max_bwd = rospy.get_param("~pwm_max_bwd")
+        self.pwm_stop    = rospy.get_param("/motor_driver/pwm_stop")
+        self.pwm_max_fwd = rospy.get_param("/motor_driver/pwm_max_fwd")
+        self.pwm_max_bwd = rospy.get_param("/motor_driver/pwm_max_bwd")
 
-        self.motor_frequency = rospy.get_param("~motor_frequency")
-        self.wheel_base = rospy.get_param("~wheel_base")
+        self.motor_frequency = rospy.get_param("/motor_driver/motor_frequency")
+        self.wheel_base = rospy.get_param("/motor_driver/wheel_base")
 
-        self.max_linear  = rospy.get_param("~max_linear")
-        self.max_angular = rospy.get_param("~max_angular")
+        self.max_linear  = rospy.get_param("/motor_driver/max_linear")
+        self.max_angular = rospy.get_param("/motor_driver/max_angular")
 
 
         # =========================
@@ -85,6 +85,7 @@ class MotorDriver:
     # =========================
     # CMD_VEL CALLBACK
     # =========================
+    
     def cmd_callback(self, msg: Twist):
         linear = max(min(msg.linear.x / self.max_linear, self.max_linear), 0)
         angular = max(min(msg.angular.z / self.max_angular, self.max_angular), 
@@ -93,11 +94,32 @@ class MotorDriver:
         left_speed = linear - (angular * self.wheel_base / 2)
         right_speed = linear + (angular * self.wheel_base / 2)
 
+        left_speed  = max(0.0, min(1.0, left_speed))
+        right_speed = max(0.0, min(1.0, right_speed))
+
         rospy.logdebug(f"Left speed: {left_speed:.2f}, Right speed: {right_speed:.2f}")
+
+        self.set_motor_left(1.08 * left_speed)
+        self.set_motor_right(right_speed)
+    """
+
+    def cmd_callback(self, msg: Twist):
+        rospy.loginfo(f"CMD: linear={msg.linear.x:.3f}, angular={msg.angular.z:.3f}")
+
+        linear  = max(min(msg.linear.x  / self.max_linear,  1.0), 0.0)
+        angular = max(min(msg.angular.z / self.max_angular,  1.0), -1.0)
+
+        left_speed  = linear - (angular * self.wheel_base / 2)
+        right_speed = linear + (angular * self.wheel_base / 2)
+
+        left_speed  = max(0.0, min(1.0, left_speed))
+        right_speed = max(0.0, min(1.0, right_speed))
+
+        rospy.loginfo(f"PWM: left={left_speed:.3f}, right={right_speed:.3f}")
 
         self.set_motor_left(left_speed)
         self.set_motor_right(right_speed)
-
+    """
 
     # =========================
     # SHUTDOWN

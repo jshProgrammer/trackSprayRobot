@@ -1,0 +1,7 @@
+<launch>
+    <rosparam file="$(find navigation)/config/navigation.yaml" command="load"/>
+	
+    <node name="navigation" pkg="navigation" type="navigation.py" output="screen">
+    <rosparam file="$(find navigation)/config/navigation.yaml" command="load"/>
+</node>
+</launch>

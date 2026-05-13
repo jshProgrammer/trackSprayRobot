@@ -19,7 +19,7 @@ motor_driver:
   # =========================
   # DRIVE LIMITS
   # =========================
-  max_linear: 0.5      # m/s
+  max_linear: 0.3      # m/s
   max_angular: 1.0     # rad/s
 
   # =========================

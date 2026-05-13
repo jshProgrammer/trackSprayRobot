@@ -2,4 +2,5 @@
     <include file="$(find teleop)/launch/teleop.launch"/>
     <include file="$(find motor_control)/launch/motor.launch"/>
     <include file="$(find localization)/launch/localization.launch"/>
+    <!--<include file="$(find navigation)/launch/navigation.launch"/>-->
 </launch>

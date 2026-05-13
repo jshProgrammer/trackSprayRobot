@@ -3,6 +3,11 @@
 	
 	<!-- Motor node -->
 	<node name="motor_driver" pkg="motor_control" type="pwm_drive.py"
-		output="screen" respawn="true" respawn_delay="1"/>
-
+		output="screen" respawn="true" respawn_delay="1">
+		<rosparam param="waypoints">
+  - [50.04382, 10.20818]
+  - [50.04380, 10.20833]
+</rosparam>
+	</node>
+    
 </launch>
