@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ROS Koordinaten Sender</title>
+  <script src="https://cdn.jsdelivr.net/npm/roslib/build/roslib.min.js"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Exo+2:wght@300;600;800&display=swap');
+
+    :root {
+      --bg: #0a0e14;
+      --panel: #111827;
+      --border: #1e2d40;
+      --accent: #00d4ff;
+      --accent2: #ff6b35;
+      --green: #00ff88;
+      --red: #ff3b5c;
+      --text: #c9d6e3;
+      --muted: #4a5568;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Exo 2', sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 2rem 1rem;
+    }
+
+    /* Animated grid background */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(0,212,255,0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0,212,255,0.03) 1px, transparent 1px);
+      background-size: 40px 40px;
+      pointer-events: none;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 2.5rem;
+    }
+
+    header h1 {
+      font-size: 2rem;
+      font-weight: 800;
+      letter-spacing: 4px;
+      text-transform: uppercase;
+      background: linear-gradient(90deg, var(--accent), var(--accent2));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    header p {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 0.75rem;
+      color: var(--muted);
+      margin-top: 0.4rem;
+      letter-spacing: 2px;
+    }
+
+    .main-grid {
+      display: grid;
+      grid-template-columns: 320px 1fr;
+      gap: 1.5rem;
+      width: 100%;
+      max-width: 900px;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.5rem;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .panel::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, var(--accent), transparent);
+    }
+
+    .panel-title {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 0.7rem;
+      letter-spacing: 3px;
+      color: var(--accent);
+      text-transform: uppercase;
+      margin-bottom: 1.2rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .panel-title::before {
+      content: '';
+      width: 6px; height: 6px;
+      background: var(--accent);
+      border-radius: 50%;
+      animation: blink 2s ease-in-out infinite;
+    }
+
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.2; }
+    }
+
+    /* Connection Panel */
+    .conn-row {
+      display: flex;
+      flex-direction: column;
+      gap: 0.8rem;
+    }
+
+    label {
+      font-size: 0.7rem;
+      letter-spacing: 1px;
+      color: var(--muted);
+      text-transform: uppercase;
+      display: block;
+      margin-bottom: 0.3rem;
+    }
+
+    input[type="text"], input[type="number"] {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 0.95rem;
+      padding: 0.55rem 0.8rem;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    input:focus {
+      border-color: var(--accent);
+    }
+
+    .btn {
+      width: 100%;
+      padding: 0.7rem;
+      border: none;
+      border-radius: 8px;
+      font-family: 'Exo 2', sans-serif;
+      font-size: 0.85rem;
+      font-weight: 600;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .btn-connect {
+      background: linear-gradient(135deg, var(--accent), #0090b8);
+      color: #000;
+    }
+
+    .btn-connect:hover { transform: translateY(-1px); box-shadow: 0 4px 20px rgba(0,212,255,0.4); }
+    .btn-connect:active { transform: translateY(0); }
+
+    .btn-send {
+      background: linear-gradient(135deg, var(--accent2), #c94a1f);
+      color: #fff;
+      margin-top: 0.5rem;
+    }
+
+    .btn-send:hover { transform: translateY(-1px); box-shadow: 0 4px 20px rgba(255,107,53,0.4); }
+    .btn-send:disabled { opacity: 0.4; cursor: not-allowed; transform: none; box-shadow: none; }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 0.75rem;
+      padding: 0.35rem 0.8rem;
+      border-radius: 20px;
+      margin-top: 0.8rem;
+    }
+
+    .status-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+    }
+
+    .status-connected { background: rgba(0,255,136,0.1); color: var(--green); border: 1px solid rgba(0,255,136,0.3); }
+    .status-connected .status-dot { background: var(--green); animation: blink 1s ease-in-out infinite; }
+    .status-disconnected { background: rgba(255,59,92,0.1); color: var(--red); border: 1px solid rgba(255,59,92,0.3); }
+    .status-disconnected .status-dot { background: var(--red); }
+    .status-connecting { background: rgba(0,212,255,0.1); color: var(--accent); border: 1px solid rgba(0,212,255,0.3); }
+    .status-connecting .status-dot { background: var(--accent); animation: blink 0.5s ease-in-out infinite; }
+
+    /* Koordinaten Panel */
+    .coords-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.8rem;
+      margin-bottom: 1rem;
+    }
+
+    .coord-field {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.8rem;
+      text-align: center;
+    }
+
+    .coord-label {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 0.65rem;
+      color: var(--muted);
+      letter-spacing: 2px;
+      margin-bottom: 0.3rem;
+    }
+
+    .coord-field input {
+      border: none;
+      background: transparent;
+      text-align: center;
+      font-size: 1.4rem;
+      font-weight: 600;
+      color: var(--accent);
+      width: 100%;
+      padding: 0;
+    }
+
+    .coord-field input:focus { outline: none; }
+
+    .frame-select {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 0.9rem;
+      padding: 0.55rem 0.8rem;
+      outline: none;
+      margin-bottom: 0.8rem;
+      cursor: pointer;
+    }
+
+    /* Log Panel */
+    .log-panel {
+      grid-column: 1 / -1;
+    }
+
+    .log-panel .panel-title::before {
+      background: var(--green);
+    }
+
+    .log-panel .panel-title {
+      color: var(--green);
+    }
+
+    .log-box {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.8rem;
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 0.78rem;
+      height: 160px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column-reverse;
+    }
+
+    .log-entry {
+      padding: 0.2rem 0;
+      border-bottom: 1px solid rgba(255,255,255,0.03);
+      line-height: 1.5;
+      animation: fadeIn 0.3s ease;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(-4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .log-entry.info { color: var(--accent); }
+    .log-entry.success { color: var(--green); }
+    .log-entry.error { color: var(--red); }
+    .log-entry.warn { color: var(--accent2); }
+
+    .timestamp { color: var(--muted); margin-right: 0.5rem; }
+
+    /* Map preview panel */
+    .map-canvas-wrap {
+      position: relative;
+    }
+
+    canvas#mapPreview {
+      width: 100%;
+      border-radius: 8px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      cursor: crosshair;
+      display: block;
+    }
+
+    .map-hint {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 0.65rem;
+      color: var(--muted);
+      margin-top: 0.5rem;
+      text-align: center;
+      letter-spacing: 1px;
+    }
+
+    .send-count {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 0.75rem;
+      color: var(--muted);
+      margin-top: 0.5rem;
+      text-align: center;
+    }
+
+    .send-count span {
+      color: var(--accent2);
+      font-weight: bold;
+    }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+    @media (max-width: 680px) {
+      .main-grid { grid-template-columns: 1fr; }
+      .log-panel { grid-column: 1; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>ROS Bridge Control</h1>
+  <p>COORDINATE PUBLISHER · ROSLIB · NOETIC</p>
+</header>
+
+<div class="main-grid">
+
+  <!-- Connection Panel -->
+  <div class="panel">
+    <div class="panel-title">Verbindung</div>
+    <div class="conn-row">
+      <div>
+        <label>Roboter IP / Hostname</label>
+        <input type="text" id="robotIp" value="localhost" placeholder="z.B. 192.168.1.100">
+      </div>
+      <div>
+        <label>Port</label>
+        <input type="text" id="robotPort" value="9090">
+      </div>
+      <button class="btn btn-connect" onclick="toggleConnection()">Verbinden</button>
+      <div id="statusBadge" class="status-badge status-disconnected">
+        <div class="status-dot"></div>
+        <span id="statusText">Getrennt</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Koordinaten Panel -->
+  <div class="panel">
+    <div class="panel-title">Ziel-Koordinaten</div>
+
+    <div>
+      <label>Frame ID</label>
+      <select class="frame-select" id="frameId">
+        <option value="map">map</option>
+        <option value="odom">odom</option>
+        <option value="base_link">base_link</option>
+        <option value="world">world</option>
+      </select>
+    </div>
+
+    <div class="coords-grid">
+      <div class="coord-field">
+        <div class="coord-label">X · meter</div>
+        <input type="number" id="coordX" value="0.0" step="0.1">
+      </div>
+      <div class="coord-field">
+        <div class="coord-label">Y · meter</div>
+        <input type="number" id="coordY" value="0.0" step="0.1">
+      </div>
+      <div class="coord-field">
+        <div class="coord-label">Z · meter</div>
+        <input type="number" id="coordZ" value="0.0" step="0.1">
+      </div>
+      <div class="coord-field">
+        <div class="coord-label">YAW · rad</div>
+        <input type="number" id="coordYaw" value="0.0" step="0.1">
+      </div>
+    </div>
+
+    <button class="btn btn-send" id="sendBtn" onclick="sendCoordinates()" disabled>
+      ▶ Koordinaten senden
+    </button>
+    <div class="send-count">Gesendet: <span id="sendCount">0</span></div>
+  </div>
+
+  <!-- Map Preview Panel -->
+  <div class="panel">
+    <div class="panel-title">Map — Klick setzt Ziel</div>
+    <div class="map-canvas-wrap">
+      <canvas id="mapPreview" width="280" height="280"></canvas>
+    </div>
+    <div class="map-hint">Klicke auf die Karte um X/Y zu setzen</div>
+  </div>
+
+  <!-- Topic Info Panel -->
+  <div class="panel">
+    <div class="panel-title">Konfiguration</div>
+    <div style="font-family:'Share Tech Mono',monospace; font-size:0.78rem; line-height:2;">
+      <div style="color:var(--muted)">TOPIC</div>
+      <div style="color:var(--accent)">/goal_coordinates</div>
+      <div style="color:var(--muted); margin-top:0.5rem">MSG TYPE</div>
+      <div style="color:var(--accent)">geometry_msgs/PoseStamped</div>
+      <div style="color:var(--muted); margin-top:0.5rem">QUEUE SIZE</div>
+      <div style="color:var(--accent)">10</div>
+      <div style="color:var(--muted); margin-top:0.5rem">RATE</div>
+      <div style="color:var(--accent)">on-demand</div>
+      <hr style="border-color:var(--border); margin:1rem 0">
+      <div style="color:var(--muted); font-size:0.7rem">ROS CMD zum testen:</div>
+      <div style="color:var(--green); word-break:break-all; font-size:0.68rem; margin-top:0.3rem">rostopic echo /goal_coordinates</div>
+    </div>
+  </div>
+
+  <!-- Log Panel -->
+  <div class="panel log-panel">
+    <div class="panel-title" style="justify-content:space-between">
+      <span>System Log</span>
+      <button onclick="clearLog()" style="background:none;border:1px solid var(--border);color:var(--muted);font-size:0.65rem;padding:0.2rem 0.6rem;border-radius:4px;cursor:pointer;font-family:inherit;letter-spacing:1px">CLEAR</button>
+    </div>
+    <div class="log-box" id="logBox"></div>
+  </div>
+
+</div>
+
+<script>
+  let ros = null;
+  let goalPub = null;
+  let sendCounter = 0;
+  let isConnected = false;
+
+  // ── Log Helper ───────────────────────────────────────────────
+  function log(msg, type = 'info') {
+    const box = document.getElementById('logBox');
+    const now = new Date();
+    const ts = `${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}:${now.getSeconds().toString().padStart(2,'0')}`;
+    const el = document.createElement('div');
+    el.className = `log-entry ${type}`;
+    el.innerHTML = `<span class="timestamp">[${ts}]</span>${msg}`;
+    box.prepend(el);
+  }
+
+  function clearLog() {
+    document.getElementById('logBox').innerHTML = '';
+  }
+
+  // ── Status Badge ─────────────────────────────────────────────
+  function setStatus(state, text) {
+    const badge = document.getElementById('statusBadge');
+    badge.className = `status-badge status-${state}`;
+    document.getElementById('statusText').textContent = text;
+  }
+
+  // ── Connection ───────────────────────────────────────────────
+  function toggleConnection() {
+    if (isConnected) {
+      disconnect();
+    } else {
+      connect();
+    }
+  }
+
+  function connect() {
+    const ip   = document.getElementById('robotIp').value.trim();
+    const port = document.getElementById('robotPort').value.trim();
+    const url  = `ws://${ip}:${port}`;
+
+    log(`Verbinde mit ${url} ...`, 'info');
+    setStatus('connecting', 'Verbinde...');
+
+    ros = new ROSLIB.Ros({ url });
+
+    ros.on('connection', () => {
+      isConnected = true;
+      log('Verbindung hergestellt ✓', 'success');
+      setStatus('connected', 'Verbunden');
+      document.querySelector('.btn-connect').textContent = 'Trennen';
+      document.getElementById('sendBtn').disabled = false;
+      setupPublisher();
+    });
+
+    ros.on('error', (err) => {
+      log(`Fehler: ${err}`, 'error');
+      setStatus('disconnected', 'Fehler');
+    });
+
+    ros.on('close', () => {
+      isConnected = false;
+      log('Verbindung getrennt', 'warn');
+      setStatus('disconnected', 'Getrennt');
+      document.querySelector('.btn-connect').textContent = 'Verbinden';
+      document.getElementById('sendBtn').disabled = true;
+      goalPub = null;
+    });
+  }
+
+  function disconnect() {
+    if (ros) ros.close();
+  }
+
+  // ── Publisher Setup ──────────────────────────────────────────
+  function setupPublisher() {
+    const testSub = new ROSLIB.Topic({
+      ros,
+      name: '/test_data',
+      messageType: 'std_msgs/String'
+  });
+
+    testSub.subscribe(msg => {
+      log('Empfangen: ' + msg.data, 'success');
+    });
+    
+    goalPub = new ROSLIB.Topic({
+      ros,
+      name: '/goal_coordinates',
+      messageType: 'geometry_msgs/PoseStamped'
+    });
+    log('Publisher auf /goal_coordinates bereit', 'success');
+  }
+
+  // ── Sende Koordinaten ────────────────────────────────────────
+  function sendCoordinates() {
+    if (!goalPub) { log('Kein Publisher — bitte zuerst verbinden', 'error'); return; }
+
+    const x   = parseFloat(document.getElementById('coordX').value)   || 0;
+    const y   = parseFloat(document.getElementById('coordY').value)   || 0;
+    const z   = parseFloat(document.getElementById('coordZ').value)   || 0;
+    const yaw = parseFloat(document.getElementById('coordYaw').value) || 0;
+    const frameId = document.getElementById('frameId').value;
+
+    // Yaw → Quaternion (vereinfacht, nur Z-Rotation)
+    const qz = Math.sin(yaw / 2);
+    const qw = Math.cos(yaw / 2);
+
+    const msg = new ROSLIB.Message({
+      header: {
+        frame_id: frameId,
+        stamp: { secs: Math.floor(Date.now() / 1000), nsecs: 0 }
+      },
+      pose: {
+        position:    { x, y, z },
+        orientation: { x: 0, y: 0, z: qz, w: qw }
+      }
+    });
+
+    goalPub.publish(msg);
+    sendCounter++;
+    document.getElementById('sendCount').textContent = sendCounter;
+    log(`Gesendet → x:${x.toFixed(2)} y:${y.toFixed(2)} z:${z.toFixed(2)} yaw:${yaw.toFixed(2)} [${frameId}]`, 'success');
+  }
+
+  // ── Map Canvas ───────────────────────────────────────────────
+  const canvas = document.getElementById('mapPreview');
+  const ctx = canvas.getContext('2d');
+  let goalMarker = null;
+
+  function drawMap() {
+    const W = canvas.width, H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+
+    // Background
+    ctx.fillStyle = '#0a0e14';
+    ctx.fillRect(0, 0, W, H);
+
+    // Grid
+    ctx.strokeStyle = 'rgba(0,212,255,0.08)';
+    ctx.lineWidth = 1;
+    for (let x = 0; x <= W; x += 28) {
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+    }
+    for (let y = 0; y <= H; y += 28) {
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+    }
+
+    // Origin crosshair
+    ctx.strokeStyle = 'rgba(0,212,255,0.4)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath(); ctx.moveTo(W/2, 0); ctx.lineTo(W/2, H); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, H/2); ctx.lineTo(W, H/2); ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Origin label
+    ctx.fillStyle = 'rgba(0,212,255,0.5)';
+    ctx.font = '10px Share Tech Mono';
+    ctx.fillText('0,0', W/2 + 4, H/2 - 4);
+
+    // Scale indicators
+    ctx.fillStyle = 'rgba(74,85,104,0.8)';
+    ctx.font = '9px Share Tech Mono';
+    ctx.fillText('10m', W - 28, H/2 - 4);
+    ctx.fillText('-10m', 2, H/2 - 4);
+
+    // Goal marker
+    if (goalMarker) {
+      const gx = goalMarker.cx, gy = goalMarker.cy;
+
+      // Crosshair lines
+      ctx.strokeStyle = 'rgba(255,107,53,0.5)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, H); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W, gy); ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Outer ring
+      ctx.strokeStyle = 'rgba(255,107,53,0.4)';
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(gx, gy, 18, 0, Math.PI * 2); ctx.stroke();
+
+      // Inner dot
+      ctx.fillStyle = '#ff6b35';
+      ctx.beginPath(); ctx.arc(gx, gy, 5, 0, Math.PI * 2); ctx.fill();
+
+      // Label
+      ctx.fillStyle = '#ff6b35';
+      ctx.font = 'bold 10px Share Tech Mono';
+      ctx.fillText(`(${goalMarker.wx.toFixed(1)}, ${goalMarker.wy.toFixed(1)})`, gx + 10, gy - 10);
+    }
+  }
+
+  canvas.addEventListener('click', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const cx = (e.clientX - rect.left) * (canvas.width / rect.width);
+    const cy = (e.clientY - rect.top)  * (canvas.height / rect.height);
+    const W = canvas.width, H = canvas.height;
+
+    // Canvas → world (±10m range)
+    const wx = ((cx - W/2) / (W/2)) * 10;
+    const wy = -((cy - H/2) / (H/2)) * 10;
+
+    goalMarker = { cx, cy, wx, wy };
+    document.getElementById('coordX').value = wx.toFixed(2);
+    document.getElementById('coordY').value = wy.toFixed(2);
+    drawMap();
+    log(`Karte: Ziel gesetzt auf x:${wx.toFixed(2)} y:${wy.toFixed(2)}`, 'info');
+  });
+
+  drawMap();
+  log('System bereit. Bitte rosbridge_server starten und verbinden.', 'info');
+  log('Befehl: roslaunch rosbridge_server rosbridge_websocket.launch', 'warn');
+</script>
+</body>
+</html>
