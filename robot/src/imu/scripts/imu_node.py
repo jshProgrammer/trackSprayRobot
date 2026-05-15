@@ -71,7 +71,7 @@ class MPU9250Node:
         # Get parameters
         self.i2c_bus = rospy.get_param('~i2c_bus', 1)
         #TODO: might need higher publish rate!
-        self.publish_rate = rospy.get_param('~publish_rate', 20)  # Hz
+        self.publish_rate = rospy.get_param('~publish_rate', 100)  # Hz
         self.gyro_fsr = rospy.get_param('~gyro_fsr', 250)  # deg/s
         self.accel_fsr = rospy.get_param('~accel_fsr', 2)  # g
         self.frame_id = rospy.get_param('~frame_id', 'imu_link')
