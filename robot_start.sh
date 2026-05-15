@@ -2,7 +2,7 @@
 
 # --- KONFIGURATION ---
 # Falls der Ordner nicht direkt im Home-Verzeichnis liegt, den Pfad hier anpassen:
-TARGET_DIR="$HOME/tracksprayrobot/robot"
+TARGET_DIR="$HOME/trackSprayRobot/robot"
 # ---------------------
 
 echo "========================================="
