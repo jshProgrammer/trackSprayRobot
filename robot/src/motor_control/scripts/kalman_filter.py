@@ -11,6 +11,10 @@ Fixes:
   - Achsenauswahl: x / y / z, mit optionalem Vorzeichen-Flip
   - Sanity-Check: warnt wenn falsche Achse gewählt scheint
 
+Ansteuerung: 
+- angular.z = 0 -> Fährt wie auf Schienen starr geradeaus (für unebene Böden).
+- angular.z != 0 -> Roboter lenkt dynamisch, Führungsschiene dreht sich mit.
+
 Condition: pip3 install transforms3d
 """
 
@@ -314,6 +318,7 @@ class EKFNoeticNode:
     def control_loop(self, event):
         cmd = Twist()
 
+        """
         if self.is_moving:
             heading_error = self._wrap(self.target_heading - self.x[2, 0])
             d_error       = (heading_error - self._last_heading_error) / 0.05
@@ -326,6 +331,58 @@ class EKFNoeticNode:
             cmd.linear.x             = 0.0
             cmd.angular.z            = 0.0
             self._last_heading_error = 0.0
+
+        self.cmd_pub.publish(cmd)
+        """
+
+        cmd = Twist()
+        if self.is_moving:
+            current_x   = self.x[0, 0]
+            current_y   = self.x[1, 0]
+            current_yaw = self.x[2, 0]
+
+            # MODUS A: Der Benutzer lenkt aktiv von Hand (Kurve)
+            if abs(self.commanded_angular_speed) > 0.01:
+                cmd.linear.x = self.linear_speed
+                cmd.angular.z = self.commanded_angular_speed
+                
+                # Wir verschieben den Spur-Startpunkt und Kurs fließend mit der Bewegung,
+                # damit der Stanley-Regler nach der Kurve weich auf der neuen Richtung aufsetzt.
+                self.line_start_x = current_x
+                self.line_start_y = current_y
+                self.target_heading = current_yaw
+                self._last_heading_error = 0.0
+                self._steering_active = True
+
+            # MODUS B: Es soll nur die Spur gehalten werden (Geradeaus im Matsch)
+            else:
+                # Falls wir gerade aus einer Kurve kommen, die Spur jetzt final fixieren
+                if getattr(self, '_steering_active', False):
+                    self.line_start_x = current_x
+                    self.line_start_y = current_y
+                    self.target_heading = current_yaw
+                    self._steering_active = False
+
+                # Klassischer Stanley-Spurregler
+                heading_error = self._wrap(self.target_heading - current_yaw)
+                d_heading_error = (heading_error - self._last_heading_error) / dt
+                self._last_heading_error = heading_error
+
+                dx = current_x - self.line_start_x
+                dy = current_y - self.line_start_y
+                cross_track_error = math.sin(self.target_heading) * dx - math.cos(self.target_heading) * dy
+
+                steering_out = (self.kp_heading * heading_error) + \
+                               (self.kd_heading * d_heading_error) + \
+                               (self.kp_track * cross_track_error)
+
+                cmd.linear.x = self.linear_speed
+                cmd.angular.z = float(np.clip(steering_out, -1.5, 1.5))
+        else:
+            cmd.linear.x = 0.0
+            cmd.angular.z = 0.0
+            self._last_heading_error = 0.0
+            self._steering_active = False
 
         self.cmd_pub.publish(cmd)
 
