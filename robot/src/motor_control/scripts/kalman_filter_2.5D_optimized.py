@@ -47,7 +47,7 @@ class EKFNoeticNode:
 
         # ── Regler & Spur-Parameter ───────────────────────────────────
         self.linear_speed = 0.0
-        self.commanded_angular_spped = 0.0
+        self.commanded_angular_speed = 0.0
         self.is_moving = False
         
         # Startpunkt der virtuellen Führungsschiene
@@ -65,7 +65,8 @@ class EKFNoeticNode:
 
         # ── Sensordaten-Zwischenspeicher ───────────────────────────────
         self.imu_w = 0.0          # Drehrate um Z-Achse (w)
-        self.antenna_height = 0.26 # GPS-Antennenhöhe in Metern
+        #TODO: probably change back
+        self.antenna_height =1.2 #0.26 # GPS-Antennenhöhe in Metern
         self.roll = 0.0
         self.pitch = 0.0
 
@@ -108,15 +109,18 @@ class EKFNoeticNode:
         self.commanded_angular_speed = msg.angular.z
 
         was_moving = self.is_moving
-        self.is_moving = abs
         self.is_moving = abs(msg.linear.x) > 0.01 or abs(msg.angular.z) > 0.01
 
         # Dynamisches Einrasten der Spur, sobald sich der Roboter in Bewegung setzt
+        #if not self.is_moving and abs(msg.linear.x) > 0.01:
         if self.is_moving and (not was_moving or (msg.angular.z == 0 and not hasattr(self, '_last_was_steering'))):
             self.line_start_x = self.x[0, 0]
             self.line_start_y = self.x[1, 0]
             self.target_heading = self.x[2, 0] 
             rospy.loginfo(f"Spur eingerastet! Kurs: {math.degrees(self.target_heading):.1f}°")
+
+        #self.linear_speed = msg.linear.x
+        #self.is_moving = abs(msg.linear.x) > 0.01
        
 
     def imu_callback(self, msg):
@@ -128,6 +132,14 @@ class EKFNoeticNode:
         self.roll, self.pitch, _ = euler_from_quaternion(q)
 
         # KORREKTUR: Kein self._ekf_update() mehr mit dem driftenden Yaw!
+
+         # ── DEBUG ──────────────────────────────────────────────────────
+        """rospy.loginfo_throttle(1.0,
+            f"[IMU] w_z={self.imu_w:+.5f}rad/s | "
+            f"roll={math.degrees(self.roll):+.2f}° | "
+            f"pitch={math.degrees(self.pitch):+.2f}°"
+        )"""
+        # ───────────────────────────────────────────────────────────────
 
     def gps_callback(self, msg):
         rtk = self._parse_rtk_status(msg)
@@ -151,6 +163,15 @@ class EKFNoeticNode:
 
         # Reines Positions-Update via GPS
         self._ekf_update(z=np.array([[gx], [gy]]), H=self.H_gps, R=self.R_gps[rtk])
+
+        # ── DEBUG ──────────────────────────────────────────────────────
+        """rospy.loginfo_throttle(1.0,
+            f"[GPS] roh=({gx + self.antenna_height * math.sin(self.pitch):.3f}, "
+            f"{gy - self.antenna_height * math.sin(self.roll):.3f}) | "
+            f"kompensiert=({gx:.3f}, {gy:.3f}) | "
+            f"RTK={'FIXED' if self._rtk_status==2 else 'FLOAT'}"
+        )"""
+        # ───────────────────────────────────────────────────────────────
 
     # ══════════════════════════════════════════════════════════════════
     # FILTER MATH
@@ -269,6 +290,17 @@ class EKFNoeticNode:
                 steering_out = (self.kp_heading * heading_error) + \
                                (self.kd_heading * d_heading_error) + \
                                (self.kp_track * cross_track_error)
+
+                # ── DEBUG ──────────────────────────────────────────────────────
+                """rospy.loginfo_throttle(0.5,
+                    f"[SPURREGLER] "
+                    f"heading_err={math.degrees(heading_error):+.2f}° | "
+                    f"cross_track={cross_track_error:+.3f}m | "
+                    f"d_heading={math.degrees(d_heading_error):+.2f}°/s | "
+                    f"steering_out={steering_out:+.3f} | "
+                    f"imu_w={self.imu_w:+.4f}rad/s"
+                )"""
+                # ───────────────────────────────────────────────────────────────
 
                 cmd.linear.x = self.linear_speed
                 cmd.angular.z = float(np.clip(steering_out, -1.5, 1.5))

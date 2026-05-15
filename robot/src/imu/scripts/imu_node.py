@@ -12,7 +12,10 @@ import rospy
 import math
 from sensor_msgs.msg import Imu
 from geometry_msgs.msg import Vector3Stamped, Quaternion
+import datetime
 import time
+import os
+import logging
 
 try:
     from mpu9250_jmdev.mpu_9250 import MPU9250
@@ -67,6 +70,8 @@ class MPU9250Node:
     def __init__(self):
         """Initialize ROS node and MPU9250 sensor"""
         rospy.init_node('mpu9250_node', anonymous=False)
+
+        self.init_logging()
         
         # Get parameters
         self.i2c_bus = rospy.get_param('~i2c_bus', 1)
@@ -85,10 +90,15 @@ class MPU9250Node:
         
         # Validate parameters
         if self.gyro_fsr not in self.GFS_RANGES:
-            rospy.logerr(f"Invalid gyro_fsr: {self.gyro_fsr}. Valid values: {list(self.GFS_RANGES.keys())}")
+            debugOutput = f"Invalid gyro_fsr: {self.gyro_fsr}. Valid values: {list(self.GFS_RANGES.keys())}"
+            rospy.logerr(debugOutput)
+            self.logging.error(debugOutput)
             exit(1)
         if self.accel_fsr not in self.AFS_RANGES:
-            rospy.logerr(f"Invalid accel_fsr: {self.accel_fsr}. Valid values: {list(self.AFS_RANGES.keys())}")
+            debugOutput = f"Invalid accel_fsr: {self.accel_fsr}. Valid values: {list(self.AFS_RANGES.keys())}"
+            rospy.logerr(debugOutput)
+            self.logging.error(debugOutput)
+
             exit(1)
         
         # Initialize sensor
@@ -107,9 +117,15 @@ class MPU9250Node:
                 self.GFS_RANGES[self.gyro_fsr],
                 self.AFS_RANGES[self.accel_fsr]
             )
-            rospy.loginfo("MPU9250 sensor initialized successfully")
+
+            debugOutput = "MPU9250 sensor initialized successfully"
+            rospy.loginfo(debugOutput)
+            self.logger.info(debugOutput)
         except Exception as e:
-            rospy.logerr(f"Failed to initialize MPU9250: {e}")
+            debugOutput = f"Failed to initialize MPU9250: {e}"
+            rospy.logerr(debugOutput)
+            self.logger.error(debugOutput)
+
             rospy.logerr("Make sure:")
             rospy.logerr("  1. Sensor is connected to I2C bus")
             rospy.logerr("  2. Run: sudo i2cdetect -y 1")
@@ -118,12 +134,34 @@ class MPU9250Node:
         # Publisher
         self.imu_pub = rospy.Publisher('imu/data', Imu, queue_size=10)
         
-        rospy.loginfo("Publisher created. Topic: imu/data (sensor_msgs/Imu)")
+
+    # =========================
+    # Additional Debug logging
+    # =========================
+    def init_logging(self):
+        log_dir = os.path.expanduser(f"~/trackRobotLogs/trackRobot_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}")
+        os.makedirs(log_dir, exist_ok=True)
+
+        log_file = os.path.join(
+            log_dir,
+            "imu_node.log"
+        )
+
+        self.logger = logging.getLogger("imu_node")
+        self.logger.setLevel(logging.INFO)
+
+        file_handler = logging.FileHandler(log_file)
+        formatter = logging.Formatter(
+            '%(asctime)s [%(levelname)s] %(message)s'
+        )
+
+        file_handler.setFormatter(formatter)
+        self.logger.addHandler(file_handler)
     
     def run(self):
         """Main loop to read and publish sensor data"""
         rate = rospy.Rate(self.publish_rate)
-        rospy.loginfo(f"Starting main loop at {self.publish_rate} Hz")
+        self.logger.info(f"Starting main loop at {self.publish_rate} Hz")
         
         while not rospy.is_shutdown():
             try:
@@ -161,26 +199,32 @@ class MPU9250Node:
                 imu_msg.angular_velocity.z = gyro_z
                 
                 # Orientation is not available from raw IMU data (would need fusion)
-                #TODO: add orientation
-                imu_msg.orientation = Quaternion(x=0, y=0, z=0, w=1)
+                #TODO: if not working => standard orientation has not been commented out before!
+                #imu_msg.orientation = Quaternion(x=0, y=0, z=0, w=1)
                 
                 # Set covariance (estimate)
                 imu_msg.linear_acceleration_covariance = [0.01] * 9
                 imu_msg.angular_velocity_covariance = [0.01] * 9
                 imu_msg.orientation_covariance = [-1] * 9  # -1 means not available
-                
+
+                self.logger.info(f"Accel (m/s^2): x={accel_x:.3f}, y={accel_y:.3f}, z={accel_z:.3f};        Gyro (rad/s): x={gyro_x:.3f}, y={gyro_y:.3f}, z={gyro_z:.3f}")
+
                 # Publish messages
                 self.imu_pub.publish(imu_msg)
                 
                 rate.sleep()
                 
             except Exception as e:
-                rospy.logerr(f"Error reading sensor data: {e}")
+                debugOutput = f"Error reading sensor data: {e}"
+                rospy.logerr(debugOutput)
+                self.logger.error(debugOutput)
                 rate.sleep()
     
     def shutdown(self):
         """Cleanup on shutdown"""
-        rospy.loginfo("MPU9250 node shutting down")
+        debugOutput = "MPU9250 node shutting down"
+        rospy.loginfo(debugOutput)
+        self.logger.info(debugOutput)
 
 
 if __name__ == '__main__':
