@@ -43,25 +43,7 @@
 
 ---
 
-### `gps/unfixed`
-**Typ:** `sensor_msgs/NavSatFix` · **Richtung:** Robot → Client
 
-Gleiche Felder wie `gps/fix`, ungefiltert.
-
----
-
-### `gps/nmea_sentence`
-**Typ:** `std_msgs/String` · **Richtung:** `gps_node` → `ntrip_client_node`
-
-| Feld | Typ |
-|---|---|
-| `data` | `string` (NMEA) |
-
----
-
-### `gps/rtcm`
-**Typ:** `std_msgs/ByteMultiArray` · **Richtung:** `ntrip_client_node` → `gps_node`
-
-| Feld | Typ |
-|---|---|
-| `data` | `byte[]` (RTCM3) |
+## Will be there soon 
+- Battery Level
+- Spray Level 
