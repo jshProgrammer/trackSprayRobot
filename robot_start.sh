@@ -17,6 +17,15 @@ else
     exit 1
 fi
 
+#Alte ROS-Prozesse killen
+echo "--> Bereinige alte ROS-Prozesse..."
+pkill -f roslaunch 2>/dev/null
+pkill -f rosrun 2>/dev/null
+pkill -f rosmaster 2>/dev/null
+pkill -f roscore 2>/dev/null
+sleep 1
+echo "[OK] Alte Prozesse beendet."
+
 # 2. pigpiod mit sudo starten
 echo "--> Starte pigpiod Daemon (Sudo-Passwort erforderlich)..."
 sudo pigpiod
