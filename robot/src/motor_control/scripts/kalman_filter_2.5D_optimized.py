@@ -117,7 +117,8 @@ class EKFNoeticNode:
             self.line_start_x = self.x[0, 0]
             self.line_start_y = self.x[1, 0]
             self.target_heading = self.x[2, 0] 
-            rospy.loginfo(f"Spur eingerastet! Kurs: {math.degrees(self.target_heading):.1f}°")
+            #TODO: only add to log file
+            #rospy.loginfo(f"Spur eingerastet! Kurs: {math.degrees(self.target_heading):.1f}°")
 
         #self.linear_speed = msg.linear.x
         #self.is_moving = abs(msg.linear.x) > 0.01
@@ -140,6 +141,32 @@ class EKFNoeticNode:
             f"pitch={math.degrees(self.pitch):+.2f}°"
         )"""
         # ───────────────────────────────────────────────────────────────
+
+    def imu_callback(self, msg: Imu):
+        """
+        IMU-Callback ohne Magnetometer.
+ 
+        Gyroskop Z  → imu_w  (für EKF-Prädiktion, unverändert)
+        Accelerometer → Roll & Pitch via Gravitations-Projektion
+                        (für GPS-Antenne-Hebelarm-Kompensation)
+ 
+        KEIN euler_from_quaternion: orientation_covariance[0] == -1
+        bedeutet 'Orientierung nicht verfügbar' laut REP-145.
+        """
+        # Drehrate um Z-Achse (wird in _ekf_predict für Yaw-Integration genutzt)
+        self.imu_w = msg.angular_velocity.z
+ 
+        # Roll & Pitch aus Erdbeschleunigung schätzen.
+        # Gültig solange keine starke Linearbeschleunigung vorhanden ist –
+        # bei einem Feldroboter mit moderaten Geschwindigkeiten ausreichend genau.
+        ax = msg.linear_acceleration.x
+        ay = msg.linear_acceleration.y
+        az = msg.linear_acceleration.z
+ 
+        # Pitch: Neigung nach vorne/hinten
+        self.pitch = math.atan2(-ax, math.sqrt(ay**2 + az**2))
+        # Roll: Neigung zur Seite
+        self.roll  = math.atan2(ay, az)
 
     def gps_callback(self, msg):
         rtk = self._parse_rtk_status(msg)

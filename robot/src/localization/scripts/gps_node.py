@@ -12,11 +12,11 @@ class LC29HDriver:
     def __init__(self):
         rospy.init_node('lc29h_driver', anonymous=True)
  
+        self.init_logging()
         self._init_params()
         self._init_serial()
         self._init_publishers()
         self._init_subscribers()
-        self.init_logging()
  
     # =========================
     # Receiving parameters from config

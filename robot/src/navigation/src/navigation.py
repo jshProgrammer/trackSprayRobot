@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Navigation Node – GPS-basiert (RTK)
+Navigation Node – GPS-basiert (RTK) + IMU Heading
 Position kommt direkt von gps/fix (NavSatFix).
-
+Heading kommt von imu/data (sensor_msgs/Imu) via Quaternion → Yaw.
+ 
 Erweiterbar für:
-  - IMU  → Heading aus Magnetometer statt aus GPS-Bewegung
   - Odometrie/Encoder → lokale Dead-Reckoning als Fallback
   - EKF  → sensor_msgs/Imu + nav_msgs/Odometry fusionieren
 """
@@ -12,23 +12,43 @@ Erweiterbar für:
 import math
 import rospy
 from geometry_msgs.msg import Twist
-from sensor_msgs.msg import NavSatFix, NavSatStatus
+from sensor_msgs.msg import NavSatFix, NavSatStatus, Imu
+import os
+import datetime
+import logging
 
 # ═══════════════════════════════════════════════════════════════════════
 # KONSTANTEN
 # ═══════════════════════════════════════════════════════════════════════
 EARTH_RADIUS = 6_371_000.0   # m
 
+def quaternion_to_yaw(q) -> float:
+    """
+    Extrahiert den Yaw-Winkel (Heading) aus einem Quaternion.
+    Gibt Winkel in Radiant zurück (ENU-Frame: 0 = Ost, π/2 = Nord).
+    """
+    # Rotation um Z-Achse: yaw = atan2(2*(w*z + x*y), 1 - 2*(y² + z²))
+    siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
+    cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+    return math.atan2(siny_cosp, cosy_cosp)
+
 
 class NavigationNode:
     def __init__(self):
+        self.init_logging()
         self._init_params()
         self._init_state()
         self._init_ros()
+        
+        debugOutput = "Navigation Node gestartet (GPS-Modus)"
+        rospy.loginfo(debugOutput)
+        self.logger.info(debugOutput)
 
-        rospy.loginfo("Navigation Node gestartet (GPS-Modus)")
-        rospy.loginfo(f"Waypoints: {self.waypoints}")
-        rospy.loginfo("Warte auf GPS-Fix...")
+        self.logger.info(f"Waypoints: {self.waypoints}")
+
+        debugOutput = "Warte auf GPS-Fix..."
+        rospy.loginfo(debugOutput)
+        self.logger.info(debugOutput)
 
     # ════════════════════════════════════════════════════════════════════
     # INIT
@@ -52,57 +72,141 @@ class NavigationNode:
         self.current_lat  = None
         self.current_lon  = None
         self.has_fix      = False
+        self.had_rtk_fix = False
 
         # ── Ursprung für lokale XY-Konvertierung ─────────────────────────
         # Wird beim ersten Fix automatisch gesetzt
         self.origin_lat   = None
         self.origin_lon   = None
 
-        # ── Heading-Schätzung aus GPS-Bewegung ───────────────────────────
-        # TODO: durch IMU (sensor_msgs/Imu) ersetzen sobald verfügbar
-        self.heading      = None   # rad, None = unbekannt
-        self.prev_x       = None
-        self.prev_y       = None
+       # ── Heading aus IMU ───────────────────────────────────────────────
+        self.heading      = None   # rad, None = noch kein IMU-Paket empfangen
+        self.has_imu      = False
 
         # ── Waypoint-State ───────────────────────────────────────────────
         self.current_waypoint_index = 0
         self.at_goal                = False
 
     def _init_ros(self):
-        self.cmd_vel_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=1)
+        self.cmd_vel_pub = rospy.Publisher('/cmd_vel_controll', Twist, queue_size=1)
 
         rospy.Subscriber('gps/fix', NavSatFix, self._gps_callback)
 
-        # TODO: IMU-Subscriber hier ergänzen, sobald Hardware vorhanden:
-        # rospy.Subscriber('imu/data', Imu, self._imu_callback)
+        rospy.Subscriber('imu/data', Imu, self._imu_callback)
 
         # TODO: Odometrie-Subscriber für Encoder-Feedback:
         # rospy.Subscriber('odom', Odometry, self._odom_callback)
 
         rospy.Timer(rospy.Duration(0.01), self._control_loop)   # more than 10 Hz
 
+    # =========================
+    # Additional Debug logging
+    # =========================
+    def init_logging(self):
+        log_dir = os.path.expanduser(f"~/trackRobotLogs/trackRobot_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}")
+        os.makedirs(log_dir, exist_ok=True)
+
+        log_file = os.path.join(
+            log_dir,
+            "navigation_node.log"
+        )
+
+        self.logger = logging.getLogger("navigation_node")
+        self.logger.setLevel(logging.INFO)
+
+        file_handler = logging.FileHandler(log_file)
+        formatter = logging.Formatter(
+            '%(asctime)s [%(levelname)s] %(message)s'
+        )
+
+        file_handler.setFormatter(formatter)
+        self.logger.addHandler(file_handler)
+
+
     # ════════════════════════════════════════════════════════════════════
     # GPS CALLBACK
     # ════════════════════════════════════════════════════════════════════
     def _gps_callback(self, msg: NavSatFix):
+        # ────────────────────────────────────────── ───────────────────
+        # RTK-Fix prüfen
+        # status = 4 → RTK Fixed
+        # ─────────────────────────────────────────────────────────────
+        if msg.status.status >= 4 and not self.had_rtk_fix:
+            self.had_rtk_fix = True
+
+            debugOutput = (
+                "ERSTER RTK FIX ERHALTEN! "
+                "Navigation wird freigegeben."
+            )
+
+            rospy.loginfo(debugOutput)
+            self.logger.info(debugOutput)
+
+        # ─────────────────────────────────────────────────────────────
+        # Mindestqualität prüfen
+        # ─────────────────────────────────────────────────────────────
         if msg.status.status < self.min_gps_status:
             if self.has_fix:
-                rospy.logwarn_throttle(5, "GPS-Fix verloren!")
-                self.has_fix = False
-            return
+                debugOutput = (
+                    f"GPS-Fix verloren! "
+                    f"aktueller status={msg.status.status}"
+                )
 
+                rospy.logwarn_throttle(5, debugOutput)
+                self.logger.warning(debugOutput)
+
+                self.has_fix = False
+
+            return
         self.current_lat = msg.latitude
         self.current_lon = msg.longitude
+
+        debugOutput = (
+            f"GPS Fix: lat={self.current_lat:.7f}, "
+            f"lon={self.current_lon:.7f}"
+        )
+        rospy.loginfo_throttle(1, debugOutput)
+        self.logger.info(debugOutput)
 
         # Ursprung beim allerersten Fix setzen
         if self.origin_lat is None:
             self.origin_lat = msg.latitude
             self.origin_lon = msg.longitude
-            rospy.loginfo(
-                f"Ursprung gesetzt: lat={self.origin_lat:.7f}, lon={self.origin_lon:.7f}"
-            )
+            debugOutput =  f"Ursprung gesetzt: lat={self.origin_lat:.7f}, lon={self.origin_lon:.7f}"
+            rospy.loginfo(debugOutput)
+            self.logger.info(debugOutput)
 
         self.has_fix = True
+
+    # ════════════════════════════════════════════════════════════════════
+    # IMU CALLBACK
+    # ════════════════════════════════════════════════════════════════════
+    def _imu_callback(self, msg: Imu):
+        """
+        Liest den Yaw-Winkel aus dem IMU-Quaternion.
+ 
+        Wichtig: Die IMU muss im ENU-Frame kalibriert sein
+        (REP-103: X=Ost, Y=Nord, Z=Oben), damit yaw=0 → Ost und
+        der berechnete angle_to_goal zum GPS-Bearing passt.
+ 
+        Falls deine IMU im NED-Frame arbeitet (X=Nord, Y=Ost, Z=Unten),
+        muss das Quaternion vorher konvertiert werden – oder du verwendest
+        ein IMU-Treiber-Package das REP-103 bereits umsetzt (z.B. imu_filter_madgwick).
+        """
+        self.heading = quaternion_to_yaw(msg.orientation)
+
+        heading_deg = math.degrees(self.heading)
+
+        debugOutput = (
+            f"IMU Heading: {heading_deg:.2f}°"
+        )
+        rospy.loginfo_throttle(1, debugOutput)
+        self.logger.info(debugOutput)
+
+        if not self.has_imu:
+            self.has_imu = True
+            rospy.loginfo(f"IMU aktiv. Erster Heading: {math.degrees(self.heading):.1f}°")
+            self.logger.info(f"IMU aktiv. Erster Heading: {math.degrees(self.heading):.1f}°")
 
     # ════════════════════════════════════════════════════════════════════
     # KOORDINATEN-UMRECHNUNG
@@ -118,35 +222,25 @@ class NavigationNode:
         y = dlat * EARTH_RADIUS
         return x, y
 
-    # ════════════════════════════════════════════════════════════════════
-    # HEADING-SCHÄTZUNG (aus GPS-Bewegung)
-    # ════════════════════════════════════════════════════════════════════
-    def _update_heading(self, x: float, y: float):
-        """
-        Schätzt den Heading aus zwei aufeinanderfolgenden GPS-Positionen.
-        Nur sinnvoll wenn der Roboter sich bewegt (> ~0.2 m Versatz).
-
-        TODO: Diese Methode entfernen / auskommentieren sobald IMU vorhanden.
-              Dann: self.heading = self._imu_heading
-        """
-        if self.prev_x is None:
-            self.prev_x, self.prev_y = x, y
-            return
-
-        dx = x - self.prev_x
-        dy = y - self.prev_y
-        moved = math.sqrt(dx**2 + dy**2)
-
-        if moved > 0.2:   # Mindestbewegung für sinnvollen Heading
-            self.heading = math.atan2(dy, dx)
-            self.prev_x  = x
-            self.prev_y  = y
 
     # ════════════════════════════════════════════════════════════════════
-    # HAUPTREGELSCHLEIFE (10 Hz)
+    # HAUPTREGELSCHLEIFE (100 Hz)
     # ════════════════════════════════════════════════════════════════════
     def _control_loop(self, event):
+        # ─────────────────────────────────────────────────────────────
+        # Warten bis mindestens einmal RTK-Fix vorhanden war
+        # ─────────────────────────────────────────────────────────────
+        if not self.had_rtk_fix:
+            rospy.logwarn_throttle(
+                2,
+                "Warte auf ersten RTK-Fix (status=4)..."
+            )
+
+            self._publish(0.0, 0.0)
+            return
+
         # ── Kein Fix? Anhalten ───────────────────────────────────────────
+        #TODO: remove in future version as robot should be able to briefly drive without gps fix
         if not self.has_fix:
             self._publish(0.0, 0.0)
             return
@@ -161,7 +255,7 @@ class NavigationNode:
 
         # ── Aktuelle Position als XY ─────────────────────────────────────
         cur_x, cur_y = self._gps_to_xy(self.current_lat, self.current_lon)
-        self._update_heading(cur_x, cur_y)
+        #self._update_heading(cur_x, cur_y)
 
         # ── Ziel-Waypoint ────────────────────────────────────────────────
         goal_lat, goal_lon = self.waypoints[self.current_waypoint_index]
@@ -171,27 +265,53 @@ class NavigationNode:
         dy       = goal_y - cur_y
         distance = math.sqrt(dx**2 + dy**2)
 
-        rospy.logdebug(
-            f"WP {self.current_waypoint_index + 1}/{len(self.waypoints)}: "
-            f"pos=({cur_x:.2f},{cur_y:.2f}) "
-            f"ziel=({goal_x:.2f},{goal_y:.2f}) "
-            f"dist={distance:.2f}m"
+        debugOutput = (
+            f"\n"
+            f"========== NAVIGATION ==========\n"
+            f"Current GPS:\n"
+            f"  lat={self.current_lat:.7f}\n"
+            f"  lon={self.current_lon:.7f}\n"
+            f"\n"
+            f"Current XY:\n"
+            f"  x={cur_x:.2f} m\n"
+            f"  y={cur_y:.2f} m\n"
+            f"\n"
+            f"Goal GPS:\n"
+            f"  lat={goal_lat:.7f}\n"
+            f"  lon={goal_lon:.7f}\n"
+            f"\n"
+            f"Goal XY:\n"
+            f"  x={goal_x:.2f} m\n"
+            f"  y={goal_y:.2f} m\n"
+            f"\n"
+            f"Delta:\n"
+            f"  dx={dx:.2f}\n"
+            f"  dy={dy:.2f}\n"
+            f"\n"
+            f"Distance:\n"
+            f"  {distance:.2f} m\n"
+            f"================================"
         )
+        rospy.logdebug(debugOutput)
+        self.logger.info(debugOutput)
 
         # ── Waypoint erreicht? ───────────────────────────────────────────
         if distance < self.distance_tolerance:
-            rospy.loginfo(
+            debugOutput = (
                 f"Waypoint {self.current_waypoint_index + 1} erreicht "
                 f"(lat={goal_lat}, lon={goal_lon})"
             )
+            rospy.loginfo(debugOutput)
+            self.logger.info(debugOutput)
+
             self.current_waypoint_index += 1
             self._publish(0.0, 0.0)
             return
 
-        # ── Heading unbekannt → erst geradeaus fahren um ihn zu ermitteln
+        # ── Heading unbekannt (noch kein IMU-Paket) → warten ────────────
         if self.heading is None:
-            rospy.loginfo_throttle(2, "Heading noch unbekannt – fahre geradeaus zum Kalibrieren")
-            self._publish(self.forward_velocity * 0.5, 0.0)
+            rospy.logwarn_throttle(2, "Warte auf IMU-Daten – Roboter steht still.")
+            self._publish(0.0, 0.0)
             return
 
         # ── Winkel zum Ziel ──────────────────────────────────────────────
@@ -199,18 +319,48 @@ class NavigationNode:
         angle_to_goal = math.atan2(math.sin(angle_to_goal), math.cos(angle_to_goal))
         angle_deg     = math.degrees(angle_to_goal)
 
-        #rospy.loginfo(f"Angle to goal: {angle_deg:.2f} degrees, distance: {distance:.2f}")
+        target_heading = math.degrees(math.atan2(dy, dx))
+
+
+        rospy.loginfo(
+            f"IMU={math.degrees(self.heading):.1f}° "
+            f"TARGET={target_heading:.1f}°"
+        )
+
+        debugOutput = (
+            f"\n"
+            f"===== ANGLE DEBUG =====\n"
+            f"Robot Heading: {math.degrees(self.heading):.2f}°\n"
+            f"Target Heading: {target_heading:.2f}°\n"
+            f"Angle Error: {angle_deg:.2f}°\n"
+            f"Tolerance: {self.angle_tolerance:.2f}°\n"
+            f"======================="
+        )
+
+        rospy.loginfo_throttle(1, debugOutput)
+        self.logger.info(debugOutput)
+
+        debugOutput = (
+            f"Heading={math.degrees(self.heading):.1f}° "
+            f"Zielwinkel={angle_deg:.1f}°"
+        )
+        rospy.logdebug(debugOutput)
+        self.logger.info(debugOutput)
 
         # ── Regellogik: erst drehen, dann fahren ─────────────────────────
         if abs(angle_deg) > self.angle_tolerance:
             turn = math.copysign(self.angular_velocity, angle_to_goal)
-            rospy.loginfo(f"Drehe zum Ziel: turn={turn:.2f} rad/s")
+            debugOutput = f"Drehe zum Ziel: turn={turn:.2f} rad/s"
+            rospy.loginfo(debugOutput)
+            self.logger.info(debugOutput)
             self._publish(0.0, turn)
         else:
             # Sanftes Abbremsen nahe am Ziel
             speed = min(self.forward_velocity, distance * 1.5)
             speed = max(speed, 0.05)   # Mindestgeschwindigkeit
-            #rospy.loginfo(f"Sanftes abbremsen am ende: speed={speed:.2f}")
+            debugOutput = f"Sanftes abbremsen am ende: speed={speed:.2f}"
+            rospy.loginfo(debugOutput)
+            self.logger.info(debugOutput)
             self._publish(speed, 0.0)
 
     # ════════════════════════════════════════════════════════════════════
@@ -222,6 +372,11 @@ class NavigationNode:
         msg.angular.z = angular
         #rospy.loginfo(f"Publishing cmd_vel: linear={linear:.2f}, angular={angular:.2f}")
         self.cmd_vel_pub.publish(msg)
+
+        rospy.loginfo_throttle(
+            1,
+            f"CMD_VEL -> linear={linear:.2f}, angular={angular:.2f}"
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════════
