@@ -3,6 +3,8 @@
 NTRIP Client as ROS-Node
 - Receives GGA via Topic  gps/nmea_sentence  (no direct Serial-access, sent by gps_node)
 - Sends RTCM Corrections via Topic gps/rtcm  (written to Serial by gps_node)
+
+Fix: AF_UNSPEC statt AF_INET – Router blockiert IPv4 Port 2101, IPv6 funktioniert.
 """
 
 import socket
@@ -12,6 +14,7 @@ import time
 import threading
 import os
 import logging
+from typing import Optional
 
 import rospy
 from std_msgs.msg import String, UInt8MultiArray
@@ -19,20 +22,18 @@ from std_msgs.msg import String, UInt8MultiArray
 version    = 0.2
 useragent  = "NTRIP JCMBsoftPythonClient/%.1f" % version
 
-# Reconnect-Parameter
-FACTOR           = 2
-MAX_RECONNECT    = 10
-MAX_RECONNECT_TIME = 1200
-INITIAL_SLEEP    = 1
+FACTOR             = 2
+MAX_RECONNECT_TIME = 30
+INITIAL_SLEEP      = 1
+GGA_INTERVAL       = 5.0
+SOCKET_TIMEOUT     = 2.0
+CONNECT_TIMEOUT    = 10.0
 
 
 class NtripClientNode:
     def __init__(self):
         rospy.init_node('ntrip_client', anonymous=True)
 
-        # =========================
-        # Receiving parameters from config
-        # =========================
         self.caster     = rospy.get_param("~caster",     "")
         self.port       = rospy.get_param("~port",       2101)
         self.mountpoint = rospy.get_param("~mountpoint", "")
@@ -40,94 +41,55 @@ class NtripClientNode:
         self.password   = rospy.get_param("~password",   "")
         self.verbose    = rospy.get_param("~verbose",    False)
 
-        user_pass = f"{self.user}:{self.password}"
-        self.auth = base64.b64encode(user_pass.encode()).decode()
+        user_pass  = f"{self.user}:{self.password}"
+        self.auth  = base64.b64encode(user_pass.encode()).decode()
 
-        # Last know GGA
         self.latest_gga = None
         self.gga_lock   = threading.Lock()
 
-        # =========================
-        # Setting up subscriber and receiver
-        # =========================
-        self.rtcm_pub = rospy.Publisher(
-            'gps/rtcm', UInt8MultiArray, queue_size=10
-        ) # sending to gps node
+        self.rtcm_pub = rospy.Publisher('gps/rtcm', UInt8MultiArray, queue_size=10)
+        rospy.Subscriber('gps/nmea_sentence', String, self._nmea_callback)
 
-        rospy.Subscriber('gps/nmea_sentence', String, self._nmea_callback) # receiving from gps node
-
-        # Debug logging
         self.init_logging()
 
-        debugOutput = "NTRIP Client Node gestartet, wartet auf ersten GGA-Satz..."
-        rospy.loginfo(debugOutput)
-        self.logger.info(debugOutput)
+        rospy.loginfo("NTRIP Client Node gestartet, wartet auf ersten GGA-Satz...")
+        self.logger.info("NTRIP Client Node gestartet, wartet auf ersten GGA-Satz...")
 
     # =========================
-    # Additional Debug logging
+    # Logging
     # =========================
     def init_logging(self):
-        log_dir = os.path.expanduser(f"~/trackRobotLogs/trackRobot_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}")
-        os.makedirs(log_dir, exist_ok=True)
-
-        log_file = os.path.join(
-            log_dir,
-            "ntrip_client.log"
+        log_dir = os.path.expanduser(
+            f"~/trackRobotLogs/trackRobot_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
         )
+        os.makedirs(log_dir, exist_ok=True)
+        log_file = os.path.join(log_dir, "ntrip_client.log")
 
         self.logger = logging.getLogger("ntrip_client")
         self.logger.setLevel(logging.INFO)
-
-        file_handler = logging.FileHandler(log_file)
-        formatter = logging.Formatter(
-            '%(asctime)s [%(levelname)s] %(message)s'
-        )
-
-        file_handler.setFormatter(formatter)
-        self.logger.addHandler(file_handler)
+        handler   = logging.FileHandler(log_file)
+        handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
+        self.logger.addHandler(handler)
 
     # =========================
     # NMEA Callback
     # =========================
     def _nmea_callback(self, msg: String):
-        """Stores the current GGA-value thread-safe."""
         line = msg.data.strip()
         self.logger.info(f"NMEA empfangen: {line[:20]}")
         if 'GGA' in line:
             with self.gga_lock:
                 self.latest_gga = line
 
-    def _get_latest_gga_bytes(self) -> bytes:
+    def _get_latest_gga_bytes(self) -> Optional[bytes]:
         with self.gga_lock:
             gga = self.latest_gga
         if gga:
-            self.logger.info(f"Letzte GGA Bytes: {gga}")
+            self.logger.info(f"Letzte GGA: {gga}")
             return (gga + "\r\n").encode('ascii')
         return None
 
-    # ------------------------------------------------------------------
-    def _build_request(self) -> bytes:
-        mountpoint = "/" + self.mountpoint
-        req = (
-            f"GET {mountpoint} HTTP/1.1\r\n"
-            f"User-Agent: {useragent}\r\n"
-            f"Authorization: Basic {self.auth}\r\n"
-            f"Ntrip-Version: Ntrip/2.0\r\n"
-            f"\r\n"
-        )
-
-        debugOutput = f"Request:\n{req}"
-        
-        if self.verbose:
-            rospy.loginfo(debugOutput)
-        
-        self.logger.info(debugOutput)
-
-        return req.encode('ascii')
-
-    # ------------------------------------------------------------------
-    def _wait_for_gga(self, timeout=30.0) -> bool:
-        """Blocks until GGA-value is present or timeout."""
+    def _wait_for_gga(self, timeout=60.0) -> bool:
         deadline = time.time() + timeout
         while time.time() < deadline:
             if self._get_latest_gga_bytes():
@@ -135,134 +97,191 @@ class NtripClientNode:
             rospy.sleep(0.2)
         return False
 
-    # ------------------------------------------------------------------
+    # =========================
+    # Connection helpers
+    # =========================
+    def _resolve_addr(self):
+        """
+        Löst den Hostnamen mit AF_UNSPEC auf – nimmt was funktioniert.
+        IPv4 Port 2101 wird vom Router blockiert, IPv6 geht durch.
+        Bevorzugt IPv6 wenn verfügbar.
+        """
+        try:
+            results = socket.getaddrinfo(
+                self.caster, self.port,
+                socket.AF_UNSPEC, socket.SOCK_STREAM
+            )
+            self.logger.info(f"DNS-Ergebnisse: {results}")
+
+            # IPv6 bevorzugen (IPv4 wird vom Router geblockt)
+            for r in results:
+                if r[0] == socket.AF_INET6:
+                    self.logger.info(f"Verwende IPv6: {r[4]}")
+                    return r[0], r[4]
+
+            # Fallback IPv4
+            r = results[0]
+            self.logger.info(f"Verwende IPv4 (Fallback): {r[4]}")
+            return r[0], r[4]
+
+        except socket.gaierror as e:
+            self.logger.error(f"DNS-Aufloesung fehlgeschlagen: {e}")
+            return None, None
+
+    def _build_request(self) -> bytes:
+        mountpoint = "/" + self.mountpoint
+        req = (
+            f"GET {mountpoint} HTTP/1.1\r\n"
+            f"Host: {self.caster}:{self.port}\r\n"
+            f"User-Agent: {useragent}\r\n"
+            f"Authorization: Basic {self.auth}\r\n"
+            f"Ntrip-Version: Ntrip/2.0\r\n"
+            f"Connection: close\r\n"
+            f"\r\n"
+        )
+        self.logger.info(f"Request:\n{req}")
+        if self.verbose:
+            rospy.loginfo(f"Request:\n{req}")
+        return req.encode('ascii')
+
     def _parse_header(self, raw: bytes):
-        """
-        Returns (ok, error_msg)
-        ok=True  → Connection accepted, GGA sent
-        ok=False → fatal Error, terminated node
-        """
         text = raw.decode('utf-8', errors='replace')
         if "SOURCETABLE" in text:
             return False, "Mountpoint existiert nicht (SOURCETABLE erhalten)"
-        if "401 Unauthorized" in text:
-            return False, "Unauthorized – Zugangsdaten prüfen"
-        if "404 Not Found" in text:
-            return False, "Mountpoint nicht gefunden (404)"
+        if "401" in text:
+            return False, f"Unauthorized (401) – Zugangsdaten prüfen"
+        if "403" in text:
+            return False, f"Forbidden (403)"
+        if "404" in text:
+            return False, f"Mountpoint nicht gefunden (404)"
         if any(ok in text for ok in ("ICY 200 OK", "HTTP/1.0 200 OK", "HTTP/1.1 200 OK")):
             return True, ""
-        # Noch nicht vollständig – weiterlesen
         return None, ""
 
-    # ------------------------------------------------------------------
-    def _publish_rtcm(self, data: bytes):
-        msg = UInt8MultiArray()
-        msg.data = list(data)
-        self.logger.info(f"RTCM bytes werden gepublished: {data}")
-        self.rtcm_pub.publish(msg)
+    def _send_gga(self, sock: socket.socket) -> bool:
+        gga = self._get_latest_gga_bytes()
+        if not gga:
+            return True
+        try:
+            sock.sendall(gga)
+            self.logger.info(f"GGA gesendet: {gga.strip()}")
+            return True
+        except socket.error as e:
+            self.logger.warning(f"GGA senden fehlgeschlagen: {e}")
+            return False
 
-    # ------------------------------------------------------------------
+    def _publish_rtcm(self, data: bytes):
+        msg      = UInt8MultiArray()
+        msg.data = list(data)
+        self.rtcm_pub.publish(msg)
+        self.logger.info(f"RTCM {len(data)} Bytes publiziert")
+
+    # =========================
+    # Main loop
+    # =========================
     def run(self):
-        # Wait until first GGA received
         if not self._wait_for_gga(timeout=60):
-            debugOutput = "Kein GGA-Satz empfangen – NTRIP Client beendet sich."
-            rospy.logerr(debugOutput)
-            self.logger.info(debugOutput)
+            msg = "Kein GGA-Satz empfangen – NTRIP Client beendet sich."
+            rospy.logerr(msg)
+            self.logger.error(msg)
             return
 
-        debugOutput = f"Verbinde mit {self.caster}:{self.port}/{self.mountpoint}"
-        self.logger.info(debugOutput)
-
-        sleep_time    = INITIAL_SLEEP
-        reconnect_try = 0
+        sleep_time = INITIAL_SLEEP
 
         while not rospy.is_shutdown():
-            reconnect_try += 1
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            #sock.settimeout(10)
+            # ── Adresse auflösen (IPv6 bevorzugt) ───────────────────────
+            family, addr = self._resolve_addr()
+            if addr is None:
+                rospy.sleep(sleep_time)
+                sleep_time = min(sleep_time * FACTOR, MAX_RECONNECT_TIME)
+                continue
 
+            msg = f"Verbinde mit {self.caster}:{self.port}/{self.mountpoint} ({addr[0]})"
+            rospy.loginfo(msg)
+            self.logger.info(msg)
+
+            sock = socket.socket(family, socket.SOCK_STREAM)
+            sock.settimeout(CONNECT_TIMEOUT)
+
+            # ── Connect ─────────────────────────────────────────────────
             try:
-                sock.connect((self.caster, self.port))
-                sock.settimeout(10.0)
+                sock.connect(addr)
             except socket.error as e:
-                debugOutput = f"Verbindungsfehler: {e}. Retry in {sleep_time}s"
-                rospy.logwarn(debugOutput)
-                self.logger.warning(debugOutput)
+                msg = f"Verbindungsfehler: {e}. Retry in {sleep_time}s"
+                rospy.logwarn(msg)
+                self.logger.warning(msg)
                 sock.close()
                 rospy.sleep(sleep_time)
                 sleep_time = min(sleep_time * FACTOR, MAX_RECONNECT_TIME)
                 continue
 
             try:
-                # 1. send request
+                # 1. HTTP-Request senden
                 sock.sendall(self._build_request())
 
-                # 2. receive header and validate
+                # 2. GGA direkt nach Request senden (SAPOS erwartet das für VRS)
+                self._send_gga(sock)
+
+                # 3. Header lesen & prüfen
+                sock.settimeout(CONNECT_TIMEOUT)
                 header_raw = b""
                 ok = None
                 while ok is None:
-                    header_raw += sock.recv(1024)
+                    chunk = sock.recv(1024)
+                    if not chunk:
+                        break
+                    header_raw += chunk
                     ok, err = self._parse_header(header_raw)
                     if ok is False:
                         rospy.logerr(err)
                         self.logger.error(err)
-                        return  # fatal Error
+                        return  # fataler Fehler
 
-                # 3. send GGA
-                gga = self._get_latest_gga_bytes()
-                if gga:
-                    sock.sendall(gga)
-                    debugOutput = f"GGA gesendet: {gga.strip()}"
-                    self.logger.info(debugOutput)
+                if not ok:
+                    rospy.logwarn("Unvollständiger Header, Reconnect...")
+                    self.logger.warning(f"Unvollständiger Header: {repr(header_raw[:200])}")
+                    continue
 
-                # 4. read RTCM-data
-                debugOutput = "NTRIP verbunden – empfange RTCM-Korrekturen"
-                rospy.loginfo(debugOutput)
-                self.logger.info(debugOutput)
+                # 4. Nochmal GGA senden nach Header-OK
+                self._send_gga(sock)
 
-                sock.settimeout(5.0)
-                sleep_time    = INITIAL_SLEEP  # reset after success
-                reconnect_try = 0
+                rospy.loginfo("NTRIP verbunden – empfange RTCM-Korrekturen")
+                self.logger.info("NTRIP verbunden – empfange RTCM-Korrekturen")
 
+                # Verbindung war erfolgreich → Backoff zurücksetzen
+                sleep_time    = INITIAL_SLEEP
                 last_gga_time = time.time()
-                GGA_INTERVAL  = 1.0  # seconds between GGA updates
 
+                sock.settimeout(SOCKET_TIMEOUT)
+
+                # 5. RTCM-Schleife
                 while not rospy.is_shutdown():
                     try:
-                        #TODO: if not working change back to 4096
                         data = sock.recv(1024)
                         if not data:
-                            debugOutput = "Verbindung vom Caster getrennt."
-                            rospy.logwarn(debugOutput)
-                            self.logger.warning(debugOutput)
+                            rospy.logwarn("Verbindung vom Caster getrennt.")
+                            self.logger.warning("Verbindung vom Caster getrennt.")
                             break
-
                         self._publish_rtcm(data)
 
-                        # send new GGA periodically
-                        if time.time() - last_gga_time > GGA_INTERVAL:
-                            gga = self._get_latest_gga_bytes()
-                            if gga:
-                                sock.sendall(gga)
-                            last_gga_time = time.time()
-
                     except socket.timeout:
-                        debugOutput = "Socket Timeout – warte auf Daten"
-                        rospy.logwarn_throttle(10, debugOutput)
-                        self.logger.warning(debugOutput)
-                    except socket.error as e:
-                        debugOutput = f"Socket Fehler: {e}"
-                        rospy.logwarn(debugOutput)
-                        self.logger.warning(debugOutput)
-                        break
+                        pass  # normal, weiter
 
+                    # GGA periodisch senden
+                    if time.time() - last_gga_time >= GGA_INTERVAL:
+                        if not self._send_gga(sock):
+                            break
+                        last_gga_time = time.time()
+
+            except socket.error as e:
+                msg = f"Verbindungsfehler: {e}. Retry in {sleep_time}s"
+                rospy.logwarn(msg)
+                self.logger.warning(msg)
             finally:
                 sock.close()
 
-            debugOutput = f"Getrennt. Reconnect in {sleep_time}s"
-            rospy.logwarn(debugOutput)
-            self.logger.warning(debugOutput)
-
+            rospy.logwarn(f"Getrennt. Reconnect in {sleep_time}s")
+            self.logger.warning(f"Getrennt. Reconnect in {sleep_time}s")
             rospy.sleep(sleep_time)
             sleep_time = min(sleep_time * FACTOR, MAX_RECONNECT_TIME)
 
