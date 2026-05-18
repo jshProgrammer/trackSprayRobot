@@ -4,6 +4,9 @@ import serial
 import pynmea2
 from sensor_msgs.msg import NavSatFix, NavSatStatus
 from std_msgs.msg import UInt8MultiArray, String
+import datetime
+import os
+import logging
 
 class LC29HDriver:
     def __init__(self):
@@ -13,6 +16,7 @@ class LC29HDriver:
         self._init_serial()
         self._init_publishers()
         self._init_subscribers()
+        self.init_logging()
  
     # =========================
     # Receiving parameters from config
@@ -25,9 +29,13 @@ class LC29HDriver:
     def _init_serial(self):
         try:
             self.ser = serial.Serial(self.port, baudrate=self.baud, timeout=0.5)
-            rospy.loginfo(f"LC29H connected on {self.port}")
+            debugOutput = f"LC29H connected on {self.port}"
+            self.logger.info(debugOutput)
+            rospy.loginfo(debugOutput)
         except Exception as e:
-            rospy.logerr(f"Serial error: {e}")
+            debugOutput = f"Serial error: {e}"
+            self.logger.error(debugOutput)
+            rospy.logerr(debugOutput)
             raise
 
     # =========================
@@ -42,6 +50,30 @@ class LC29HDriver:
  
     def _init_subscribers(self):
         rospy.Subscriber('gps/rtcm', UInt8MultiArray, self._rtcm_callback)
+
+    # =========================
+    # Additional Debug logging
+    # =========================
+    def init_logging(self):
+        log_dir = os.path.expanduser(f"~/trackRobotLogs/trackRobot_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}")
+        os.makedirs(log_dir, exist_ok=True)
+
+        log_file = os.path.join(
+            log_dir,
+            "gps_node.log"
+        )
+
+        self.logger = logging.getLogger("gps_node")
+        self.logger.setLevel(logging.INFO)
+
+        file_handler = logging.FileHandler(log_file)
+        formatter = logging.Formatter(
+            '%(asctime)s [%(levelname)s] %(message)s'
+        )
+
+        file_handler.setFormatter(formatter)
+        self.logger.addHandler(file_handler)
+
  
     # =========================
     # RTCM Callback (for NTRIP Client / RTK)
@@ -50,7 +82,9 @@ class LC29HDriver:
         try:
             self.ser.write(bytes(msg.data))
         except Exception as e:
-            rospy.logerr_throttle(5, f"RTCM write error: {e}")
+            debugOutput = f"RTCM write error: {e}"
+            rospy.logerr_throttle(5, debugOutput)
+            self.logger.error(debugOutput)
 
     # =========================
     # Unfixed GPS (for debugging)
@@ -115,6 +149,7 @@ class LC29HDriver:
     def _process_line(self, line: str):
         # pass all NMEA sentences for NTRIP_Client
         if line.startswith('$'):
+            self.logger.info(f"NMEA: {line.strip()}")
             self.nmea_pub.publish(String(data=line))
  
         if not line.startswith('$GNGGA'):
@@ -123,6 +158,8 @@ class LC29HDriver:
         try:
             msg      = pynmea2.parse(line)
             gps_qual = int(msg.gps_qual)
+
+            self.logger.info(f"Parsed GGA - Lat: {msg.latitude}, Lon: {msg.longitude}, Alt: {msg.altitude}, Qual: {gps_qual}")
  
             self.unfixed_pub.publish(self._build_unfixed(msg))
  
@@ -131,12 +168,15 @@ class LC29HDriver:
             # =========================
             fix = self._build_fix(msg, gps_qual)
             if fix is not None:
+                self.logger.info(f"Publishing GPS Fix - Lat: {fix.latitude}, Lon: {fix.longitude}, Alt: {fix.altitude}, Status: {fix.status.status}")
                 self.pub.publish(fix)
  
         except pynmea2.ParseError:
             pass
         except Exception as e:
-            rospy.logerr_throttle(5, f"GPS error: {e}")
+            debugOutput = f"GPS error: {e}"
+            self.logger.error(debugOutput)
+            rospy.logerr_throttle(5, debugOutput)
  
     def run(self):
         while not rospy.is_shutdown():
@@ -144,12 +184,16 @@ class LC29HDriver:
                 line = self.ser.readline().decode('ascii', errors='replace')
                 self._process_line(line)
             except Exception as e:
-                rospy.logerr_throttle(5, f"Serial read error: {e}")
+                debugOutput = f"Serial read error: {e}"
+                self.logger.error(debugOutput)
+                rospy.logerr_throttle(5, debugOutput)
  
     def shutdown(self):
         if self.ser and self.ser.is_open:
             self.ser.close()
-            rospy.loginfo("Serial port closed")
+            debugOutput = "Serial port closed"
+            rospy.loginfo(debugOutput)
+            self.logger.info(debugOutput)
  
 
 if __name__ == '__main__':
