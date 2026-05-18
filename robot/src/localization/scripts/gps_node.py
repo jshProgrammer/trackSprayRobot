@@ -3,7 +3,7 @@ import rospy
 import serial
 import pynmea2
 from sensor_msgs.msg import NavSatFix, NavSatStatus
-from std_msgs.msg import UInt8MultiArray, String
+from std_msgs.msg import UInt8MultiArray, String, UInt8
 import datetime
 import os
 import logging
@@ -47,6 +47,11 @@ class LC29HDriver:
         # unfixed publisher will probably be removed in the future!
         self.unfixed_pub = rospy.Publisher('gps/unfixed',       NavSatFix, queue_size=10)
         self.nmea_pub    = rospy.Publisher('gps/nmea_sentence', String,    queue_size=10)
+        self.qual_pub = rospy.Publisher(
+            'gps/quality',
+            UInt8,
+            queue_size=10
+        )
  
     def _init_subscribers(self):
         rospy.Subscriber('gps/rtcm', UInt8MultiArray, self._rtcm_callback)
@@ -158,6 +163,8 @@ class LC29HDriver:
         try:
             msg      = pynmea2.parse(line)
             gps_qual = int(msg.gps_qual)
+
+            self.qual_pub.publish(UInt8(data=gps_qual))
 
             self.logger.info(f"Parsed GGA - Lat: {msg.latitude}, Lon: {msg.longitude}, Alt: {msg.altitude}, Qual: {gps_qual}")
  

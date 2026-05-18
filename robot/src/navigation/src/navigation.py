@@ -16,6 +16,7 @@ from sensor_msgs.msg import NavSatFix, NavSatStatus, Imu
 import os
 import datetime
 import logging
+from std_msgs.msg import UInt8
 
 # ═══════════════════════════════════════════════════════════════════════
 # KONSTANTEN
@@ -73,6 +74,7 @@ class NavigationNode:
         self.current_lon  = None
         self.has_fix      = False
         self.had_rtk_fix = False
+        self.gps_quality = 0
 
         # ── Ursprung für lokale XY-Konvertierung ─────────────────────────
         # Wird beim ersten Fix automatisch gesetzt
@@ -91,6 +93,12 @@ class NavigationNode:
         self.cmd_vel_pub = rospy.Publisher('/cmd_vel_controll', Twist, queue_size=1)
 
         rospy.Subscriber('gps/fix', NavSatFix, self._gps_callback)
+
+        rospy.Subscriber(
+            'gps/quality',
+            UInt8,
+            self._gps_quality_callback
+        )
 
         rospy.Subscriber('imu/data', Imu, self._imu_callback)
 
@@ -127,21 +135,6 @@ class NavigationNode:
     # GPS CALLBACK
     # ════════════════════════════════════════════════════════════════════
     def _gps_callback(self, msg: NavSatFix):
-        # ────────────────────────────────────────── ───────────────────
-        # RTK-Fix prüfen
-        # status = 4 → RTK Fixed
-        # ─────────────────────────────────────────────────────────────
-        if msg.status.status >= 4 and not self.had_rtk_fix:
-            self.had_rtk_fix = True
-
-            debugOutput = (
-                "ERSTER RTK FIX ERHALTEN! "
-                "Navigation wird freigegeben."
-            )
-
-            rospy.loginfo(debugOutput)
-            self.logger.info(debugOutput)
-
         # ─────────────────────────────────────────────────────────────
         # Mindestqualität prüfen
         # ─────────────────────────────────────────────────────────────
@@ -178,6 +171,24 @@ class NavigationNode:
 
         self.has_fix = True
 
+
+
+    def _gps_quality_callback(self, msg):
+        self.gps_quality = msg.data
+
+        rospy.loginfo_throttle(
+            1,
+            f"GPS Quality = {self.gps_quality}"
+        )
+
+        # 4 = RTK FIX
+        if self.gps_quality >= 4 and not self.had_rtk_fix:
+            self.had_rtk_fix = True
+
+            rospy.loginfo(
+                "RTK FIX erreicht -> Navigation freigegeben"
+            )
+
     # ════════════════════════════════════════════════════════════════════
     # IMU CALLBACK
     # ════════════════════════════════════════════════════════════════════
@@ -193,7 +204,13 @@ class NavigationNode:
         muss das Quaternion vorher konvertiert werden – oder du verwendest
         ein IMU-Treiber-Package das REP-103 bereits umsetzt (z.B. imu_filter_madgwick).
         """
-        self.heading = quaternion_to_yaw(msg.orientation)
+        q = msg.orientation
+        # Rohwerte loggen
+        rospy.loginfo_throttle(0.5,
+            f"RAW Quaternion: x={q.x:.4f} y={q.y:.4f} z={q.z:.4f} w={q.w:.4f}"
+        )
+        self.heading = quaternion_to_yaw(q)
+
 
         heading_deg = math.degrees(self.heading)
 
