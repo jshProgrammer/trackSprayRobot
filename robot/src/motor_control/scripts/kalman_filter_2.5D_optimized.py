@@ -13,11 +13,12 @@ import numpy as np
 import math
 from geometry_msgs.msg import Twist
 from sensor_msgs.msg import Imu, NavSatFix
+from std_msgs.msg import UInt8
 class RTKStatus:
     NO_FIX = 0
     FLOAT  = 1
     FIXED  = 2
-    
+
 class EKFNoeticNode:
     def __init__(self):
         rospy.init_node('ekf_rtk_node', anonymous=True)
@@ -26,6 +27,7 @@ class EKFNoeticNode:
         self._gps_origin_lat = None
         self._gps_origin_lon = None
         self._rtk_status = RTKStatus.NO_FIX
+        self.gps_quality = 0  # from /gps/quality topic from gps_node
 
         # ── EKF-Zustand: [x, y, θ, v] ──────────────────────────────────
         self.x = np.zeros((4, 1))
@@ -72,8 +74,9 @@ class EKFNoeticNode:
         # ── ROS Schnittstellen ──────────────────────────────────────────
         rospy.Subscriber('/imu/data', Imu, self.imu_callback)
         rospy.Subscriber('/gps/fix', NavSatFix, self.gps_callback)
+        rospy.Subscriber('/gps/quality', UInt8, self._gps_quality_callback)
         rospy.Subscriber('/cmd_vel_controll', Twist, self.cmd_vel_callback)
-        
+
         self.cmd_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
 
         # Regler- und Filtertaktung fest auf 20 Hz (0.05s)
@@ -91,13 +94,24 @@ class EKFNoeticNode:
         ref  = math.radians(self._gps_origin_lat)
         return dlon * R * math.cos(ref), dlat * R
 
+    def _gps_quality_callback(self, msg: UInt8):
+        """
+        Receive RTK quality directly from gps_node (consistent with navigation.py).
+        Quality mapping: 4=RTK FIXED (cm), 5=RTK FLOAT (dm), 2=DGPS, 1=GPS, else=NO_FIX
+        """
+        self.gps_quality = msg.data
+
     def _parse_rtk_status(self, msg):
-        status = msg.status.status
-        cov = msg.position_covariance[0]
-        if status < 0: return RTKStatus.NO_FIX
-        if cov <= 0.001: return RTKStatus.FIXED
-        elif cov <= 0.25: return RTKStatus.FLOAT
-        else: return RTKStatus.NO_FIX
+        """
+        Convert gps_quality to RTK status for EKF.
+        No more magic thresholds or reverse-engineering from covariance!
+        """
+        if self.gps_quality == 4:
+            return RTKStatus.FIXED
+        elif self.gps_quality == 5:
+            return RTKStatus.FLOAT
+        else:
+            return RTKStatus.NO_FIX
 
     # ══════════════════════════════════════════════════════════════════
     # CALLBACKS
