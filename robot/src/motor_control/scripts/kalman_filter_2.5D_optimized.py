@@ -13,20 +13,19 @@ import numpy as np
 import math
 from geometry_msgs.msg import Twist
 from sensor_msgs.msg import Imu, NavSatFix
-from tf.transformations import euler_from_quaternion
-
 class RTKStatus:
     NO_FIX = 0
     FLOAT  = 1
     FIXED  = 2
-
+    
 class EKFNoeticNode:
-    _gps_origin_lat = None
-    _gps_origin_lon = None
-    _rtk_status     = RTKStatus.NO_FIX
-
     def __init__(self):
         rospy.init_node('ekf_rtk_node', anonymous=True)
+
+        # ── GPS Ursprung & RTK Status
+        self._gps_origin_lat = None
+        self._gps_origin_lon = None
+        self._rtk_status = RTKStatus.NO_FIX
 
         # ── EKF-Zustand: [x, y, θ, v] ──────────────────────────────────
         self.x = np.zeros((4, 1))
@@ -124,45 +123,27 @@ class EKFNoeticNode:
         #self.is_moving = abs(msg.linear.x) > 0.01
        
 
-    def imu_callback(self, msg):
-        # Drehrate für das EKF-Predict im Speicher sichern
-        self.imu_w = msg.angular_velocity.z
-
-        # Roll und Pitch für Hebelarm-Kompensation der Antenne auslesen
-        q = [msg.orientation.x, msg.orientation.y, msg.orientation.z, msg.orientation.w]
-        self.roll, self.pitch, _ = euler_from_quaternion(q)
-
-        # KORREKTUR: Kein self._ekf_update() mehr mit dem driftenden Yaw!
-
-         # ── DEBUG ──────────────────────────────────────────────────────
-        """rospy.loginfo_throttle(1.0,
-            f"[IMU] w_z={self.imu_w:+.5f}rad/s | "
-            f"roll={math.degrees(self.roll):+.2f}° | "
-            f"pitch={math.degrees(self.pitch):+.2f}°"
-        )"""
-        # ───────────────────────────────────────────────────────────────
-
     def imu_callback(self, msg: Imu):
         """
         IMU-Callback ohne Magnetometer.
- 
-        Gyroskop Z  → imu_w  (für EKF-Prädiktion, unverändert)
+
+        Gyroskop Z  → imu_w  (für EKF-Prädiktion)
         Accelerometer → Roll & Pitch via Gravitations-Projektion
                         (für GPS-Antenne-Hebelarm-Kompensation)
- 
-        KEIN euler_from_quaternion: orientation_covariance[0] == -1
-        bedeutet 'Orientierung nicht verfügbar' laut REP-145.
+
+        Die imu_node encodiert nur Yaw in der Quaternion (x=0, y=0),
+        daher extrahieren wir Roll/Pitch aus echten Beschleunigungsdaten.
         """
         # Drehrate um Z-Achse (wird in _ekf_predict für Yaw-Integration genutzt)
         self.imu_w = msg.angular_velocity.z
- 
+
         # Roll & Pitch aus Erdbeschleunigung schätzen.
         # Gültig solange keine starke Linearbeschleunigung vorhanden ist –
         # bei einem Feldroboter mit moderaten Geschwindigkeiten ausreichend genau.
         ax = msg.linear_acceleration.x
         ay = msg.linear_acceleration.y
         az = msg.linear_acceleration.z
- 
+
         # Pitch: Neigung nach vorne/hinten
         self.pitch = math.atan2(-ax, math.sqrt(ay**2 + az**2))
         # Roll: Neigung zur Seite
