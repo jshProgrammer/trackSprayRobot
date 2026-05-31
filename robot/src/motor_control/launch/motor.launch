@@ -4,6 +4,7 @@
 	<!-- Motor node -->
 	<node name="motor_driver" pkg="motor_control" type="pwm_drive.py"
 		output="screen" ><!--respawn="true" respawn_delay="1">-->
+		<!--TODO: waypoints can probably be removed here! -->
 <rosparam param="waypoints">
 - [50.04382, 10.20818]
 - [50.04380, 10.20833]
