@@ -71,13 +71,13 @@ class JoyToCmdVel:
         self.last_spray_state = spray
 
         # -------------------
-        # Notstop (L2 = axis[3]) = HARD RESET (kill all nodes)
-        # 1.0 -> 0 (nicht gedrückt)
-        # -1.0 -> 1 (voll gedrückt)
+        # Emergency stop (L2 trigger = axis[3])
+        # Analog trigger: 1.0 (not pressed) to -1.0 (fully pressed)
+        # Trigger >50% = emergency
         # -------------------
         l2 = axes[3]
 
-        if l2 == 1:
+        if l2 < -0.5:  # L2 trigger pressed more than 50%
             self.reset_pub.publish(EmergencyReset(is_soft=False))
 
         # -------------------
