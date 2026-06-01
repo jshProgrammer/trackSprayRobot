@@ -147,7 +147,7 @@ class NavigationNode:
             if rtk == RTKStatus.FIXED or rtk == RTKStatus.FLOAT:
                 self.origin_lat = msg.latitude
                 self.origin_lon = msg.longitude
-                rospy.loginfo(f"RTK-Ursprung gesetzt: {msg.latitude:.7f}, {msg.longitude:.7f}")
+                rospy.loginfo(f"RTK-Ursprung gesetzt: {msg.latitude}, {msg.longitude}")
             #return
 
     def _parse_rtk_status(self, msg):
@@ -332,7 +332,7 @@ class NavigationNode:
             true_robot_heading = math.atan2(
                 math.sin(true_robot_heading), 
                 math.cos(true_robot_heading)
-                )
+            )
 
             # 2. Ziel-Wegpunkt berechnen
             goal_lat, goal_lon = self.waypoints[self.current_waypoint_index]
