@@ -20,6 +20,12 @@ from std_msgs.msg import UInt8
 # ═══════════════════════════════════════════════════════════════════════
 EARTH_RADIUS = 6_371_000.0   # m
 
+class RTKStatus:
+    NO_FIX = 0
+    FLOAT  = 1
+    FIXED  = 2
+
+
 def quaternion_to_yaw(q) -> float:
     """
     Extrahiert den Yaw-Winkel (Heading) aus einem Quaternion.
@@ -126,10 +132,31 @@ class NavigationNode:
         rospy.loginfo_throttle(5, f"GPS Fix: lat={self.current_lat:.7f}, lon={self.current_lon:.7f}")
 
         # Ursprung beim allerersten guten Fix setzen
+        #if self.origin_lat is None :
+        #    self.origin_lat = msg.latitude
+        #    self.origin_lon = msg.longitude
+        #    rospy.loginfo(f"Ursprung gesetzt: lat={self.origin_lat:.7f}, lon={self.origin_lon:.7f}")
+
+        rtk              = self._parse_rtk_status(msg)
+        #self._rtk_status = rtk
+
+        if rtk == RTKStatus.NO_FIX:
+            return
+
         if self.origin_lat is None:
-            self.origin_lat = msg.latitude
-            self.origin_lon = msg.longitude
-            rospy.loginfo(f"Ursprung gesetzt: lat={self.origin_lat:.7f}, lon={self.origin_lon:.7f}")
+            if rtk == RTKStatus.FIXED or rtk == RTKStatus.FLOAT:
+                self.origin_lat = msg.latitude
+                self.origin_lon = msg.longitude
+                rospy.loginfo(f"RTK-Ursprung gesetzt: {msg.latitude:.7f}, {msg.longitude:.7f}")
+            #return
+
+    def _parse_rtk_status(self, msg):
+        status = msg.status.status
+        cov    = msg.position_covariance[0]
+        if status < 0:    return RTKStatus.NO_FIX
+        if cov <= 0.01:  return RTKStatus.FIXED
+        elif cov <= 0.25: return RTKStatus.FLOAT
+        else:             return RTKStatus.NO_FIX
 
     def _gps_quality_callback(self, msg):
         self.gps_quality = msg.data

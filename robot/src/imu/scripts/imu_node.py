@@ -22,7 +22,7 @@ def imu_node():
     # MPU Setup (Ohne Magnetometer, nur Beschleunigung & Gyro)
     mpu = MPU9250(
         address_ak=None,
-        address_mpu_master=MPU9050_ADDRESS_68,
+        address_mpu_master=0x68,
         bus=1,
         gfs=GFS_250,
         afs=AFS_2G
@@ -43,7 +43,7 @@ def imu_node():
     
     rospy.loginfo(f"Kalibrierung fertig! Z-Bias: {gyro_z_bias:.4f} deg/s")
     
-    rate_hz = 20
+    rate_hz = 100
     rate = rospy.Rate(rate_hz)
     
     yaw_rad = 0.0
@@ -59,6 +59,9 @@ def imu_node():
         
         # Gyro-Z bereinigen und in rad/s umwandeln
         gyro_z_clean_deg = gyro[2] - gyro_z_bias
+
+        gyro_z_clean_deg = -gyro_z_clean_deg
+
         gyro_z_rad = math.radians(gyro_z_clean_deg)
         
         # INTEGRATION: Aktueller Winkel = Alter Winkel + (Drehgeschwindigkeit * Zeit)
