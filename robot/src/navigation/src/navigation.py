@@ -374,19 +374,20 @@ class NavigationNode:
                 speed = min(self.forward_velocity, distance * 1.5)
                 speed = max(speed, 0.1)   # Mindestgeschwindigkeit etwas angehoben
                 self._publish(speed, 0.0)
-    """
-
+    
+        """
         if self.nav_state == "NAVIGATING":
 
             # Aktuellen Roboter-Heading berechnen
-            true_robot_heading = self.heading + self.heading_offset
+            #TESTTEST
+            true_robot_heading = self.heading + self.heading_offset #+ 0.5 * math.pi
             true_robot_heading = math.atan2(
                 math.sin(true_robot_heading),
                 math.cos(true_robot_heading)
             )
 
             # Gewünschter Heading = 0 rad
-            target_heading = 0.0
+            target_heading = math.pi
 
             # Heading-Fehler berechnen
             heading_error = target_heading - true_robot_heading
