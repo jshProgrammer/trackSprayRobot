@@ -240,9 +240,19 @@ class NavigationNode:
             calib_speed = max(0.1, self.forward_velocity * 0.5)
             self._publish(calib_speed, 0.0)
 
-            rospy.loginfo_throttle(0.5, f"Calibrating... Distance: {distance_driven:.2f}m")
+            
+            
+            rospy.loginfo_throttle(0.5, f"Kalibriere... Gefahren: {distance_driven:.2f}m / 1.50m")
 
+            # Mindestzeit der Kalibrierung
             calib_time = (rospy.Time.now() - self.calib_start_time).to_sec()
+
+            # Bewegung plausibilisieren
+            max_reasonable_distance = calib_time * 1.0  # max 1 m/s
+
+            #rospy.loginfo_throttle(0.5, f"Calibrating... Distance: {distance_driven:.2f}m")
+
+            #calib_time = (rospy.Time.now() - self.calib_start_time).to_sec()
 
             # Sanity check: detect GPS jumps (e.g., >1 m/s unrealistic)
             max_reasonable_distance = calib_time * 1.0
@@ -250,6 +260,7 @@ class NavigationNode:
                 rospy.logwarn("GPS jump detected -> ignoring calibration")
                 return
 
+            """
             # Calibration trigger: Need BOTH conditions for robust heading estimation:
             # 1. At least 0.5m distance: filters GPS noise, needs spatial separation
             # 2. At least 2.0s elapsed: RTK GPS has ~200-500ms latency, need 4-5 measurements
@@ -273,6 +284,32 @@ class NavigationNode:
                 rospy.loginfo(f"GPS world heading: {math.degrees(true_gps_heading):.1f}°")
                 rospy.loginfo(f"Raw IMU heading: {math.degrees(self.heading):.1f}°")
                 rospy.loginfo(f"Computed offset: {math.degrees(self.heading_offset):.1f}°")
+                rospy.loginfo("="*50)
+            return
+            """
+            if distance_driven >= 1.5 and calib_time > 3.0:
+            # Wenn wir 1.5 Meter gefahren sind, ist der GPS Vektor stabil genug!
+                self._publish(0.0, 0.0) # Kurz stoppen
+                
+                if distance_driven < 1.5:
+                    return
+
+                if abs(calib_dx) < 0.2 and abs(calib_dy) < 0.2:
+                    rospy.logwarn("GPS Bewegung zu klein für Heading")
+                    return
+                # Echten Welt-Winkel aus der gefahrenen GPS-Strecke berechnen
+
+                true_gps_heading = math.atan2(calib_dy, calib_dx)
+                
+                # Berechne den Offset zur aktuellen IMU
+                self.heading_offset = true_gps_heading - self.heading
+                
+                self.nav_state = "NAVIGATING"
+                rospy.loginfo("="*50)
+                rospy.loginfo(f"KALIBRIERUNG ERFOLGREICH!")
+                rospy.loginfo(f"GPS Welt-Winkel: {math.degrees(true_gps_heading):.1f}°")
+                rospy.loginfo(f"Roher IMU-Winkel: {math.degrees(self.heading):.1f}°")
+                rospy.loginfo(f"Berechneter Offset: {math.degrees(self.heading_offset):.1f}°")
                 rospy.loginfo("="*50)
             return
 

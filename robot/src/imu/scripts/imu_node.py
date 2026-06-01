@@ -60,8 +60,6 @@ def imu_node():
         # Gyro-Z bereinigen und in rad/s umwandeln
         gyro_z_clean_deg = gyro[2] - gyro_z_bias
 
-        gyro_z_clean_deg = -gyro_z_clean_deg
-
         gyro_z_rad = math.radians(gyro_z_clean_deg)
         
         # INTEGRATION: Aktueller Winkel = Alter Winkel + (Drehgeschwindigkeit * Zeit)

@@ -25,8 +25,7 @@ navigation:
   # =========================
   # SAFETY / TIMING
   # =========================
-  cmd_timeout: 0.5 
-
+  cmd_timeout: 0.5
   forward_velocity:  0.1    # m/s – Normalgeschwindigkeit vorwärts
   angular_velocity:  0.5    # rad/s – Drehgeschwindigkeit
 
