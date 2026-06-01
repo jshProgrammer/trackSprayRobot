@@ -320,7 +320,7 @@ class NavigationNode:
                 rospy.loginfo("="*50)
             return
 
-        """
+        
         # ═════════════════════════════════════════════════════════════════
         # PHASE 2: NORMALE NAVIGATION ZUM ZIEL
         # ═════════════════════════════════════════════════════════════════
@@ -329,7 +329,10 @@ class NavigationNode:
             # 1. Den echten Kompass-Winkel berechnen (Roh + Offset)
             true_robot_heading = self.heading + self.heading_offset
             # Winkel auf -Pi bis +Pi normalisieren
-            true_robot_heading = math.atan2(math.sin(true_robot_heading), math.cos(true_robot_heading))
+            true_robot_heading = math.atan2(
+                math.sin(true_robot_heading), 
+                math.cos(true_robot_heading)
+                )
 
             # 2. Ziel-Wegpunkt berechnen
             goal_lat, goal_lon = self.waypoints[self.current_waypoint_index]
@@ -346,11 +349,17 @@ class NavigationNode:
                 self._publish(0.0, 0.0)
                 return
 
-            # 4. Fehler zum Ziel berechnen
+                # 4. Fehler zum Ziel berechnen
+            #if abs(angle_deg) > self.angle_tolerance:
+
+
             target_heading = math.atan2(dy, dx)
-            angle_to_goal = target_heading - true_robot_heading
-            angle_to_goal = math.atan2(math.sin(angle_to_goal), math.cos(angle_to_goal))
-            angle_deg     = math.degrees(angle_to_goal)
+            angle_to_goal =  target_heading - true_robot_heading # = heading_error
+            angle_to_goal = math.atan2(
+                math.sin(angle_to_goal), 
+                math.cos(angle_to_goal)
+            )
+            #angle_deg     = math.degrees(angle_to_goal)
 
             debugOutput = (
                 f"Wegpunkt {self.current_waypoint_index+1} | "
@@ -358,22 +367,43 @@ class NavigationNode:
                 f"Robot-Angle: {math.degrees(true_robot_heading):.1f}° | "
                 f"IMU-Roh: {math.degrees(self.heading):.1f}° | "
                 f"Target-Angle: {math.degrees(target_heading):.1f}° | "
-                f"Error: {angle_deg:.1f}°"
+                #f"Error: {angle_deg:.1f}°"
             )
             rospy.loginfo_throttle(1, debugOutput)
             self.logger.info(debugOutput)
 
             # 5. Regellogik: Erst ausrichten, dann fahren
-            if abs(angle_deg) > self.angle_tolerance:
+            #if abs(angle_deg) > self.angle_tolerance:
                 # WICHTIG: Das MINUS-Zeichen hier behebt den "Donut-Effekt" / das unendliche Drehen
                 #TODO: NOT SURE WHETHER WE REALLY NEED THE MINUS?!
-                turn = -math.copysign(self.angular_velocity, angle_to_goal)
-                self._publish(0.0, turn)
+            #turn = -math.copysign(self.angular_velocity, angle_to_goal)
+                #TODO: linear was 0.0 before
+
+            k_p = 1.0
+            angular_cmd = k_p * angle_to_goal
+
+            # Begrenzen
+            angular_cmd = max(
+                -self.angular_velocity,
+                min(self.angular_velocity, angular_cmd)
+            )
+
+            rospy.loginfo(
+                f"Target={math.degrees(target_heading):.1f}° "
+                f"Robot={math.degrees(true_robot_heading):.1f}° "
+                f"Error={math.degrees(angle_to_goal):.1f}° "
+                f"Angular={angular_cmd:.2f}"
+            )
+            
+            self._publish(0.1, angular_cmd)
+
+            """
             else:
                 # Sanftes Abbremsen nahe am Ziel
                 speed = min(self.forward_velocity, distance * 1.5)
                 speed = max(speed, 0.1)   # Mindestgeschwindigkeit etwas angehoben
                 self._publish(speed, 0.0)
+            """
     
         """
         if self.nav_state == "NAVIGATING":
@@ -421,6 +451,7 @@ class NavigationNode:
 
             self._publish(0.1, angular_cmd)
             return
+        """
 
     # ════════════════════════════════════════════════════════════════════
     # HILFSMETHODEN
