@@ -168,11 +168,14 @@ class NavigationNode:
 
     def _imu_callback(self, msg: Imu):
         q = msg.orientation
-        self.heading = quaternion_to_yaw(q)
+        self.heading = self._normalize_angle(quaternion_to_yaw(q))
         
         if not self.has_imu:
             self.has_imu = True
             rospy.loginfo(f"IMU aktiv. Erster roher Heading: {math.degrees(self.heading):.1f}°")
+
+    def _normalize_angle(self, angle: float):
+        return math.atan2(math.sin(angle), math.cos(angle))
 
     # ════════════════════════════════════════════════════════════════════
     # KOORDINATEN-UMRECHNUNG
@@ -287,11 +290,11 @@ class NavigationNode:
                 rospy.loginfo("="*50)
             return
             """
-            if distance_driven >= 1.5 and calib_time > 3.0:
+            if distance_driven >= 1.0 and calib_time > 3.0:
             # Wenn wir 1.5 Meter gefahren sind, ist der GPS Vektor stabil genug!
                 self._publish(0.0, 0.0) # Kurz stoppen
                 
-                if distance_driven < 1.5:
+                if distance_driven < 1.0:
                     return
 
                 if abs(calib_dx) < 0.2 and abs(calib_dy) < 0.2:
@@ -300,10 +303,14 @@ class NavigationNode:
                 # Echten Welt-Winkel aus der gefahrenen GPS-Strecke berechnen
 
                 true_gps_heading = math.atan2(calib_dy, calib_dx)
-                
-                # Berechne den Offset zur aktuellen IMU
-                self.heading_offset = true_gps_heading - self.heading
-                
+                self.heading_offset = self._normalize_angle(true_gps_heading - self.heading)
+
+                rospy.loginfo(
+                    f"Kalibrierung: dx={calib_dx:.2f}m, dy={calib_dy:.2f}m, "
+                    f"GPS-Winkel={math.degrees(true_gps_heading):.1f}°, "
+                    f"IMU-Roh={math.degrees(self.heading):.1f}°, "
+                    f"Offset={math.degrees(self.heading_offset):.1f}°"
+                )
                 self.nav_state = "NAVIGATING"
                 rospy.loginfo("="*50)
                 rospy.loginfo(f"KALIBRIERUNG ERFOLGREICH!")
@@ -313,6 +320,7 @@ class NavigationNode:
                 rospy.loginfo("="*50)
             return
 
+        """
         # ═════════════════════════════════════════════════════════════════
         # PHASE 2: NORMALE NAVIGATION ZUM ZIEL
         # ═════════════════════════════════════════════════════════════════
@@ -348,6 +356,7 @@ class NavigationNode:
                 f"Wegpunkt {self.current_waypoint_index+1} | "
                 f"Distanz: {distance:.2f}m | "
                 f"Robot-Angle: {math.degrees(true_robot_heading):.1f}° | "
+                f"IMU-Roh: {math.degrees(self.heading):.1f}° | "
                 f"Target-Angle: {math.degrees(target_heading):.1f}° | "
                 f"Error: {angle_deg:.1f}°"
             )
@@ -357,6 +366,7 @@ class NavigationNode:
             # 5. Regellogik: Erst ausrichten, dann fahren
             if abs(angle_deg) > self.angle_tolerance:
                 # WICHTIG: Das MINUS-Zeichen hier behebt den "Donut-Effekt" / das unendliche Drehen
+                #TODO: NOT SURE WHETHER WE REALLY NEED THE MINUS?!
                 turn = -math.copysign(self.angular_velocity, angle_to_goal)
                 self._publish(0.0, turn)
             else:
@@ -364,6 +374,52 @@ class NavigationNode:
                 speed = min(self.forward_velocity, distance * 1.5)
                 speed = max(speed, 0.1)   # Mindestgeschwindigkeit etwas angehoben
                 self._publish(speed, 0.0)
+    """
+
+        if self.nav_state == "NAVIGATING":
+
+            # Aktuellen Roboter-Heading berechnen
+            true_robot_heading = self.heading + self.heading_offset
+            true_robot_heading = math.atan2(
+                math.sin(true_robot_heading),
+                math.cos(true_robot_heading)
+            )
+
+            # Gewünschter Heading = 0 rad
+            target_heading = 0.0
+
+            # Heading-Fehler berechnen
+            heading_error = target_heading - true_robot_heading
+            heading_error = math.atan2(
+                math.sin(heading_error),
+                math.cos(heading_error)
+            )
+
+            rospy.loginfo_throttle(
+                1,
+                f"Robot Heading: {math.degrees(true_robot_heading):.1f}° | "
+                f"Error: {math.degrees(heading_error):.1f}°"
+            )
+
+            # P-Regler
+            k_p = 1.0
+            angular_cmd = k_p * heading_error
+
+            # Begrenzen
+            angular_cmd = max(
+                -self.angular_velocity,
+                min(self.angular_velocity, angular_cmd)
+            )
+
+            rospy.loginfo_throttle(
+                1,
+                f"Heading={math.degrees(true_robot_heading):.1f}° "
+                f"Error={math.degrees(heading_error):.1f}° "
+                f"AngularCmd={angular_cmd:.3f}"
+            )
+
+            self._publish(0.1, angular_cmd)
+            return
 
     # ════════════════════════════════════════════════════════════════════
     # HILFSMETHODEN

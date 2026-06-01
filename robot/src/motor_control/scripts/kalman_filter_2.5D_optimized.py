@@ -67,7 +67,7 @@ class EKFNoeticNode:
         # ── Sensordaten-Zwischenspeicher ───────────────────────────────
         self.imu_w = 0.0          # Drehrate um Z-Achse (w)
         #TODO: probably change back
-        self.antenna_height =1.2 #0.26 # GPS-Antennenhöhe in Metern
+        self.antenna_height =0.26 #0.26 # GPS-Antennenhöhe in Metern
         self.roll = 0.0
         self.pitch = 0.0
 
