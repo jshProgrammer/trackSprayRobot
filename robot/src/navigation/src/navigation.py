@@ -2,7 +2,7 @@
 """
 Navigation Node – GPS-basiert (RTK) + IMU Heading (Auto-Calibrated)
 Position kommt direkt von gps/fix (NavSatFix).
-Heading kommt von imu/data (Gyro-Integration) und wird über die ersten 1.5m 
+Heading kommt von imu/data (Gyro-Integration) und wird über die ersten 1.5m
 Fahrtstrecke automatisch zur GPS-Weltkarte ausgerichtet (Kinematic Alignment).
 """
 
@@ -27,10 +27,7 @@ class RTKStatus:
 
 
 def quaternion_to_yaw(q) -> float:
-    """
-    Extrahiert den Yaw-Winkel (Heading) aus einem Quaternion.
-    Gibt Winkel in Radiant zurück.
-    """
+    """Extracts yaw angle (heading) from a quaternion. Returns angle in radians."""
     siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
     cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
     return math.atan2(siny_cosp, cosy_cosp)
@@ -41,7 +38,7 @@ class NavigationNode:
         self._init_params()
         self._init_state()
         self._init_ros()
-        
+
         debugOutput = "Navigation Node gestartet (Auto-Kalibrierungs-Modus)"
         rospy.loginfo(debugOutput)
         self.logger.info(debugOutput)
@@ -115,7 +112,6 @@ class NavigationNode:
     # CALLBACKS
     # ════════════════════════════════════════════════════════════════════
     def _gps_callback(self, msg: NavSatFix):
-        # Wenn Status nicht ausreicht -> Fehler loggen und abbrechen
         if msg.status.status < self.min_gps_status:
             if self.has_fix:
                 debugOutput = f"GPS-Fix verloren! aktueller status={msg.status.status}"
@@ -123,22 +119,15 @@ class NavigationNode:
                 self.logger.warning(debugOutput)
                 self.has_fix = False
             return
-            
+
         self.has_fix = True # Fix wiederhergestellt / aktiv
-        
+
         self.current_lat = msg.latitude
         self.current_lon = msg.longitude
 
         rospy.loginfo_throttle(5, f"GPS Fix: lat={self.current_lat:.7f}, lon={self.current_lon:.7f}")
 
-        # Ursprung beim allerersten guten Fix setzen
-        #if self.origin_lat is None :
-        #    self.origin_lat = msg.latitude
-        #    self.origin_lon = msg.longitude
-        #    rospy.loginfo(f"Ursprung gesetzt: lat={self.origin_lat:.7f}, lon={self.origin_lon:.7f}")
-
         rtk              = self._parse_rtk_status(msg)
-        #self._rtk_status = rtk
 
         if rtk == RTKStatus.NO_FIX:
             return
@@ -148,8 +137,8 @@ class NavigationNode:
                 self.origin_lat = msg.latitude
                 self.origin_lon = msg.longitude
                 rospy.loginfo(f"RTK-Ursprung gesetzt: {msg.latitude}, {msg.longitude}")
-            #return
 
+    #TODO: extract => duplicate to gps node
     def _parse_rtk_status(self, msg):
         status = msg.status.status
         cov    = msg.position_covariance[0]
@@ -164,12 +153,12 @@ class NavigationNode:
 
         if self.gps_quality >= 4 and not self.had_rtk_fix:
             self.had_rtk_fix = True
-            rospy.loginfo("RTK FIX erreicht -> Navigation freigegeben")
+            rospy.loginfo("RTK FIX oder FLOAT erreicht -> Navigation freigegeben")
 
     def _imu_callback(self, msg: Imu):
         q = msg.orientation
         self.heading = self._normalize_angle(quaternion_to_yaw(q))
-        
+
         if not self.has_imu:
             self.has_imu = True
             rospy.loginfo(f"IMU aktiv. Erster roher Heading: {math.degrees(self.heading):.1f}°")
@@ -191,267 +180,182 @@ class NavigationNode:
     # HAUPTREGELSCHLEIFE (100 Hz)
     # ════════════════════════════════════════════════════════════════════
     def _control_loop(self, event):
-        # ── Start-Bedingungen prüfen ──────────────────────────────────────
+        if not self._preconditions_met():
+            return
+
+        cur_x, cur_y = self._gps_to_xy(self.current_lat, self.current_lon)
+
+        if self.nav_state == "WAITING_FOR_FIX":
+            self._handle_waiting_for_fix(cur_x, cur_y)
+        elif self.nav_state == "CALIBRATING":
+            self._handle_calibrating(cur_x, cur_y)
+        elif self.nav_state == "NAVIGATING":
+            self._handle_navigating(cur_x, cur_y)
+
+    def _preconditions_met(self) -> bool:
+        """Returns False (and stops the robot) if any required condition is not yet satisfied."""
         if not self.had_rtk_fix:
             rospy.logwarn_throttle(2, "Warte auf ersten RTK-Fix (status=4)...")
             self._publish(0.0, 0.0)
-            return
+            return False
 
         if not self.has_fix:
             self._publish(0.0, 0.0)
-            return
-            
+            return False
+
         if self.current_waypoint_index >= len(self.waypoints):
             if not self.at_goal:
                 rospy.loginfo("Alle Waypoints erreicht! Roboter stoppt.")
                 self.at_goal = True
             self._publish(0.0, 0.0)
-            return
+            return False
 
-        # ── Aktuelle Position ────────────────────────────────────────────
         if self.origin_lat is None or self.origin_lon is None:
             rospy.logwarn_throttle(2, "Warte auf GPS-Ursprung...")
             self._publish(0.0, 0.0)
+            return False
+
+        return True
+
+    # ════════════════════════════════════════════════════════════════════
+    # PHASE 1: AUTOMATISCHE KALIBRIERUNG (Kinematic Alignment)
+    # ════════════════════════════════════════════════════════════════════
+    def _handle_waiting_for_fix(self, cur_x: float, cur_y: float):
+        """Records the calibration start position and transitions to CALIBRATING."""
+        self.calib_start_x = cur_x
+        self.calib_start_y = cur_y
+        self.calib_start_time = rospy.Time.now()
+
+        self.nav_state = "CALIBRATING"
+        rospy.loginfo("Starte Auto-Kalibrierung: Fahre 1.5m geradeaus, um den GPS-Vektor zu messen...")
+
+    def _handle_calibrating(self, cur_x: float, cur_y: float):
+        """Drives straight and accumulates GPS displacement to compute the heading offset."""
+        if self.heading is None:
+            self._publish(0.0, 0.0)
+            rospy.logwarn_throttle(2, "Warte auf IMU Daten für Kalibrierung...")
             return
 
-        # ── Aktuelle Position ────────────────────────────────────────────
-        cur_x, cur_y = self._gps_to_xy(self.current_lat, self.current_lon)
+        calib_dx = cur_x - self.calib_start_x
+        calib_dy = cur_y - self.calib_start_y
+        distance_driven = math.sqrt(calib_dx**2 + calib_dy**2)
 
-        # ═════════════════════════════════════════════════════════════════
-        # PHASE 1: AUTOMATISCHE KALIBRIERUNG (Kinematic Alignment)
-        # ═════════════════════════════════════════════════════════════════
-        if self.nav_state == "WAITING_FOR_FIX":
-            self.calib_start_x = cur_x
-            self.calib_start_y = cur_y
-            self.calib_start_time = rospy.Time.now()
+        # Drive straight at half speed during calibration
+        calib_speed = max(0.1, self.forward_velocity * 0.5)
+        self._publish(calib_speed, 0.0)
 
-            self.nav_state = "CALIBRATING"
-            rospy.loginfo("Starte Auto-Kalibrierung: Fahre 1.5m geradeaus, um den GPS-Vektor zu messen...")
+        rospy.loginfo_throttle(0.5, f"Kalibriere... Gefahren: {distance_driven:.2f}m / 1.50m")
+
+        calib_time = (rospy.Time.now() - self.calib_start_time).to_sec()
+
+        # Bewegung plausibilisieren
+        max_reasonable_distance = calib_time * 1.0  # max 1 m/s
+
+        # Sanity check: detect GPS jumps (e.g., >1 m/s unrealistic)
+        max_reasonable_distance = calib_time * 1.0
+        if distance_driven > max_reasonable_distance:
+            rospy.logwarn("GPS jump detected -> ignoring calibration")
             return
 
-        if self.nav_state == "CALIBRATING":
-            if self.heading is None:
-                self._publish(0.0, 0.0)
-                rospy.logwarn_throttle(2, "Warte auf IMU Daten für Kalibrierung...")
-                return
+        # Wenn wir 1.0 Meter gefahren sind, ist der GPS Vektor stabil genug
+        if distance_driven >= 1.0 and calib_time > 3.0:
+            self._finalize_calibration(calib_dx, calib_dy, distance_driven)
+        return
 
-            calib_dx = cur_x - self.calib_start_x
-            calib_dy = cur_y - self.calib_start_y
-            distance_driven = math.sqrt(calib_dx**2 + calib_dy**2)
+    def _finalize_calibration(self, calib_dx: float, calib_dy: float, distance_driven: float):
+        """Computes the heading offset from the driven GPS displacement and transitions to NAVIGATING."""
+        self._publish(0.0, 0.0) # Kurz stoppen
 
-            # Drive straight at half speed during calibration
-            calib_speed = max(0.1, self.forward_velocity * 0.5)
-            self._publish(calib_speed, 0.0)
-
-            
-            
-            rospy.loginfo_throttle(0.5, f"Kalibriere... Gefahren: {distance_driven:.2f}m / 1.50m")
-
-            # Mindestzeit der Kalibrierung
-            calib_time = (rospy.Time.now() - self.calib_start_time).to_sec()
-
-            # Bewegung plausibilisieren
-            max_reasonable_distance = calib_time * 1.0  # max 1 m/s
-
-            #rospy.loginfo_throttle(0.5, f"Calibrating... Distance: {distance_driven:.2f}m")
-
-            #calib_time = (rospy.Time.now() - self.calib_start_time).to_sec()
-
-            # Sanity check: detect GPS jumps (e.g., >1 m/s unrealistic)
-            max_reasonable_distance = calib_time * 1.0
-            if distance_driven > max_reasonable_distance:
-                rospy.logwarn("GPS jump detected -> ignoring calibration")
-                return
-
-            """
-            # Calibration trigger: Need BOTH conditions for robust heading estimation:
-            # 1. At least 0.5m distance: filters GPS noise, needs spatial separation
-            # 2. At least 2.0s elapsed: RTK GPS has ~200-500ms latency, need 4-5 measurements
-            # This strategy is robust across different robot speeds (slow vs fast)
-            if distance_driven >= 0.5 and calib_time >= 2.0:
-                self._publish(0.0, 0.0)  # Stop briefly
-
-                if abs(calib_dx) < 0.1 and abs(calib_dy) < 0.1:
-                    rospy.logwarn("GPS movement too small for reliable heading")
-                    return
-
-                # Calculate true world heading from GPS trajectory
-                true_gps_heading = math.atan2(calib_dy, calib_dx)
-
-                # Compute IMU offset: how much does IMU heading differ from GPS truth?
-                self.heading_offset = true_gps_heading - self.heading
-
-                self.nav_state = "NAVIGATING"
-                rospy.loginfo("="*50)
-                rospy.loginfo(f"CALIBRATION SUCCESSFUL!")
-                rospy.loginfo(f"GPS world heading: {math.degrees(true_gps_heading):.1f}°")
-                rospy.loginfo(f"Raw IMU heading: {math.degrees(self.heading):.1f}°")
-                rospy.loginfo(f"Computed offset: {math.degrees(self.heading_offset):.1f}°")
-                rospy.loginfo("="*50)
-            return
-            """
-            if distance_driven >= 1.0 and calib_time > 3.0:
-            # Wenn wir 1.5 Meter gefahren sind, ist der GPS Vektor stabil genug!
-                self._publish(0.0, 0.0) # Kurz stoppen
-                
-                if distance_driven < 1.0:
-                    return
-
-                if abs(calib_dx) < 0.2 and abs(calib_dy) < 0.2:
-                    rospy.logwarn("GPS Bewegung zu klein für Heading")
-                    return
-                # Echten Welt-Winkel aus der gefahrenen GPS-Strecke berechnen
-
-                true_gps_heading = math.atan2(calib_dy, calib_dx)
-                self.heading_offset = self._normalize_angle(true_gps_heading - self.heading)
-
-                rospy.loginfo(
-                    f"Kalibrierung: dx={calib_dx:.2f}m, dy={calib_dy:.2f}m, "
-                    f"GPS-Winkel={math.degrees(true_gps_heading):.1f}°, "
-                    f"IMU-Roh={math.degrees(self.heading):.1f}°, "
-                    f"Offset={math.degrees(self.heading_offset):.1f}°"
-                )
-                self.nav_state = "NAVIGATING"
-                rospy.loginfo("="*50)
-                rospy.loginfo(f"KALIBRIERUNG ERFOLGREICH!")
-                rospy.loginfo(f"GPS Welt-Winkel: {math.degrees(true_gps_heading):.1f}°")
-                rospy.loginfo(f"Roher IMU-Winkel: {math.degrees(self.heading):.1f}°")
-                rospy.loginfo(f"Berechneter Offset: {math.degrees(self.heading_offset):.1f}°")
-                rospy.loginfo("="*50)
+        if distance_driven < 1.0:
             return
 
-        
-        # ═════════════════════════════════════════════════════════════════
-        # PHASE 2: NORMALE NAVIGATION ZUM ZIEL
-        # ═════════════════════════════════════════════════════════════════
-        if self.nav_state == "NAVIGATING":
-            
-            # 1. Den echten Kompass-Winkel berechnen (Roh + Offset)
-            true_robot_heading = self.heading + self.heading_offset
-            # Winkel auf -Pi bis +Pi normalisieren
-            true_robot_heading = math.atan2(
-                math.sin(true_robot_heading), 
-                math.cos(true_robot_heading)
-            )
-
-            # 2. Ziel-Wegpunkt berechnen
-            goal_lat, goal_lon = self.waypoints[self.current_waypoint_index]
-            goal_x, goal_y     = self._gps_to_xy(goal_lat, goal_lon)
-
-            dx = goal_x - cur_x
-            dy = goal_y - cur_y
-            distance = math.sqrt(dx**2 + dy**2)
-
-            # 3. Waypoint erreicht?
-            if distance < self.distance_tolerance:
-                rospy.loginfo(f"Waypoint {self.current_waypoint_index + 1} erreicht!")
-                self.current_waypoint_index += 1
-                self._publish(0.0, 0.0)
-                return
-
-                # 4. Fehler zum Ziel berechnen
-            #if abs(angle_deg) > self.angle_tolerance:
-
-
-            target_heading = math.atan2(dy, dx)
-            angle_to_goal =  target_heading - true_robot_heading # = heading_error
-            angle_to_goal = math.atan2(
-                math.sin(angle_to_goal), 
-                math.cos(angle_to_goal)
-            )
-            #angle_deg     = math.degrees(angle_to_goal)
-
-            debugOutput = (
-                f"Wegpunkt {self.current_waypoint_index+1} | "
-                f"Distanz: {distance:.2f}m | "
-                f"Robot-Angle: {math.degrees(true_robot_heading):.1f}° | "
-                f"IMU-Roh: {math.degrees(self.heading):.1f}° | "
-                f"Target-Angle: {math.degrees(target_heading):.1f}° | "
-                #f"Error: {angle_deg:.1f}°"
-            )
-            rospy.loginfo_throttle(1, debugOutput)
-            self.logger.info(debugOutput)
-
-            # 5. Regellogik: Erst ausrichten, dann fahren
-            #if abs(angle_deg) > self.angle_tolerance:
-                # WICHTIG: Das MINUS-Zeichen hier behebt den "Donut-Effekt" / das unendliche Drehen
-                #TODO: NOT SURE WHETHER WE REALLY NEED THE MINUS?!
-            #turn = -math.copysign(self.angular_velocity, angle_to_goal)
-                #TODO: linear was 0.0 before
-
-            k_p = 1.0
-            angular_cmd = k_p * angle_to_goal
-
-            # Begrenzen
-            angular_cmd = max(
-                -self.angular_velocity,
-                min(self.angular_velocity, angular_cmd)
-            )
-
-            rospy.loginfo(
-                f"Target={math.degrees(target_heading):.1f}° "
-                f"Robot={math.degrees(true_robot_heading):.1f}° "
-                f"Error={math.degrees(angle_to_goal):.1f}° "
-                f"Angular={angular_cmd:.2f}"
-            )
-            
-            self._publish(0.1, angular_cmd)
-
-            """
-            else:
-                # Sanftes Abbremsen nahe am Ziel
-                speed = min(self.forward_velocity, distance * 1.5)
-                speed = max(speed, 0.1)   # Mindestgeschwindigkeit etwas angehoben
-                self._publish(speed, 0.0)
-            """
-    
-        """
-        if self.nav_state == "NAVIGATING":
-
-            # Aktuellen Roboter-Heading berechnen
-            #TESTTEST
-            true_robot_heading = self.heading + self.heading_offset #+ 0.5 * math.pi
-            true_robot_heading = math.atan2(
-                math.sin(true_robot_heading),
-                math.cos(true_robot_heading)
-            )
-
-            # Gewünschter Heading = 0 rad
-            target_heading = math.pi
-
-            # Heading-Fehler berechnen
-            heading_error = target_heading - true_robot_heading
-            heading_error = math.atan2(
-                math.sin(heading_error),
-                math.cos(heading_error)
-            )
-
-            rospy.loginfo_throttle(
-                1,
-                f"Robot Heading: {math.degrees(true_robot_heading):.1f}° | "
-                f"Error: {math.degrees(heading_error):.1f}°"
-            )
-
-            # P-Regler
-            k_p = 1.0
-            angular_cmd = k_p * heading_error
-
-            # Begrenzen
-            angular_cmd = max(
-                -self.angular_velocity,
-                min(self.angular_velocity, angular_cmd)
-            )
-
-            rospy.loginfo_throttle(
-                1,
-                f"Heading={math.degrees(true_robot_heading):.1f}° "
-                f"Error={math.degrees(heading_error):.1f}° "
-                f"AngularCmd={angular_cmd:.3f}"
-            )
-
-            self._publish(0.1, angular_cmd)
+        if abs(calib_dx) < 0.2 and abs(calib_dy) < 0.2:
+            rospy.logwarn("GPS Bewegung zu klein für Heading")
             return
-        """
+
+        # Echten Welt-Winkel aus der gefahrenen GPS-Strecke berechnen
+        true_gps_heading = math.atan2(calib_dy, calib_dx)
+        self.heading_offset = self._normalize_angle(true_gps_heading - self.heading)
+
+        rospy.loginfo(
+            f"Kalibrierung: dx={calib_dx:.2f}m, dy={calib_dy:.2f}m, "
+            f"GPS-Winkel={math.degrees(true_gps_heading):.1f}°, "
+            f"IMU-Roh={math.degrees(self.heading):.1f}°, "
+            f"Offset={math.degrees(self.heading_offset):.1f}°"
+        )
+        self.nav_state = "NAVIGATING"
+        rospy.loginfo("="*50)
+        rospy.loginfo(f"KALIBRIERUNG ERFOLGREICH!")
+        rospy.loginfo(f"GPS Welt-Winkel: {math.degrees(true_gps_heading):.1f}°")
+        rospy.loginfo(f"Roher IMU-Winkel: {math.degrees(self.heading):.1f}°")
+        rospy.loginfo(f"Berechneter Offset: {math.degrees(self.heading_offset):.1f}°")
+        rospy.loginfo("="*50)
+
+    # ════════════════════════════════════════════════════════════════════
+    # PHASE 2: NORMALE NAVIGATION ZUM ZIEL
+    # ════════════════════════════════════════════════════════════════════
+    def _handle_navigating(self, cur_x: float, cur_y: float):
+        """Proportional heading controller that steers the robot toward the current waypoint."""
+        # 1. Den echten Kompass-Winkel berechnen (Roh + Offset)
+        true_robot_heading = self._compute_true_heading()
+
+        # 2. Ziel-Wegpunkt berechnen
+        goal_lat, goal_lon = self.waypoints[self.current_waypoint_index]
+        goal_x, goal_y     = self._gps_to_xy(goal_lat, goal_lon)
+
+        dx = goal_x - cur_x
+        dy = goal_y - cur_y
+        distance = math.sqrt(dx**2 + dy**2)
+
+        # 3. Waypoint erreicht?
+        if distance < self.distance_tolerance:
+            rospy.loginfo(f"Waypoint {self.current_waypoint_index + 1} erreicht!")
+            self.current_waypoint_index += 1
+            self._publish(0.0, 0.0)
+            return
+
+        # 4. Proportionaler Lenkungsbefehl basierend auf dem Winkel zum Ziel
+        target_heading = math.atan2(dy, dx)
+        angle_to_goal =  target_heading - true_robot_heading # = heading_error
+        angle_to_goal = math.atan2(
+            math.sin(angle_to_goal),
+            math.cos(angle_to_goal)
+        )
+        #angle_deg     = math.degrees(angle_to_goal)
+
+        debugOutput = (
+            f"Wegpunkt {self.current_waypoint_index+1} | "
+            f"Distanz: {distance:.2f}m | "
+            f"Robot-Angle: {math.degrees(true_robot_heading):.1f}° | "
+            f"IMU-Roh: {math.degrees(self.heading):.1f}° | "
+            f"Target-Angle: {math.degrees(target_heading):.1f}° | "
+            #f"Error: {angle_deg:.1f}°"
+        )
+        rospy.loginfo_throttle(1, debugOutput)
+        self.logger.info(debugOutput)
+
+        k_p = 1.0
+        angular_cmd = k_p * angle_to_goal
+
+        # Begrenzen
+        angular_cmd = max(
+            -self.angular_velocity,
+            min(self.angular_velocity, angular_cmd)
+        )
+
+        rospy.loginfo(
+            f"Target={math.degrees(target_heading):.1f}° "
+            f"Robot={math.degrees(true_robot_heading):.1f}° "
+            f"Error={math.degrees(angle_to_goal):.1f}° "
+            f"Angular={angular_cmd:.2f}"
+        )
+
+        self._publish(0.1, angular_cmd)
+
+    def _compute_true_heading(self) -> float:
+        """Applies the calibration offset to the raw IMU heading to get the world-frame heading."""
+        true_heading = self.heading + self.heading_offset
+        return math.atan2(math.sin(true_heading), math.cos(true_heading))
 
     # ════════════════════════════════════════════════════════════════════
     # HILFSMETHODEN
