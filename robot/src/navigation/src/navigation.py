@@ -58,9 +58,10 @@ class NavigationNode:
 
         self.forward_velocity   = rospy.get_param('~forward_velocity', 0.5)
         self.angular_velocity   = rospy.get_param('~angular_velocity', 0.5)
-        self.distance_tolerance = rospy.get_param('~distance_tolerance', 0.3)
-        self.angle_tolerance    = rospy.get_param('~angle_tolerance', 5.0)
-        self.waypoints          = rospy.get_param('~waypoints', [])
+        self.distance_tolerance   = rospy.get_param('~distance_tolerance', 0.3)
+        self.angle_tolerance      = rospy.get_param('~angle_tolerance', 5.0)
+        self.waypoints            = rospy.get_param('~waypoints', [])
+        self.gps_to_nozzle_offset = rospy.get_param('~gps_to_nozzle_offset', 0.30)
         self.min_gps_status     = rospy.get_param('~min_gps_status', 0)
 
     def _init_state(self):
@@ -299,12 +300,16 @@ class NavigationNode:
         # 1. Den echten Kompass-Winkel berechnen (Roh + Offset)
         true_robot_heading = self._compute_true_heading()
 
+        # GPS sitzt 30cm hinter der Düse → Düsenposition in Fahrtrichtung vorrechnen
+        nozzle_x = cur_x + self.gps_to_nozzle_offset * math.cos(true_robot_heading)
+        nozzle_y = cur_y + self.gps_to_nozzle_offset * math.sin(true_robot_heading)
+
         # 2. Ziel-Wegpunkt berechnen
         goal_lat, goal_lon = self.waypoints[self.current_waypoint_index]
         goal_x, goal_y     = self._gps_to_xy(goal_lat, goal_lon)
 
-        dx = goal_x - cur_x
-        dy = goal_y - cur_y
+        dx = goal_x - nozzle_x
+        dy = goal_y - nozzle_y
         distance = math.sqrt(dx**2 + dy**2)
 
         # 3. Waypoint erreicht?

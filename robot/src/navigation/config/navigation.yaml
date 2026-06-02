@@ -29,7 +29,8 @@ navigation:
   forward_velocity:  0.1    # m/s – Normalgeschwindigkeit vorwärts
   angular_velocity:  0.5    # rad/s – Drehgeschwindigkeit
 
-  distance_tolerance: 1.5   # m – Waypoint gilt als erreicht
+  #TODO: tried reducing this tolerance
+  distance_tolerance: 0.3   # m – Waypoint gilt als erreicht
   angle_tolerance:   45.0   # Grad – ab wann dreht der Roboter
 
     # ── GPS-Qualität ───────────────────────────────────────────────────────
