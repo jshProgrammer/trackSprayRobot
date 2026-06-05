@@ -135,6 +135,13 @@ class MotorDriver:
             left_speed *= scale
             right_speed *= scale
 
+        min_speed = min(left_speed, right_speed)
+        if min_speed < 0.0:
+            left_speed  -= min_speed
+            right_speed -= min_speed
+        left_speed  = min(1.0, left_speed)
+        right_speed = min(1.0, right_speed)
+
         rospy.loginfo_throttle(
                 1,
                 f"left_speed_after={left_speed}"
