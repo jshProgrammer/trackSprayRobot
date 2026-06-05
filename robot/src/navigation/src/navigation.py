@@ -311,19 +311,15 @@ class NavigationNode:
         # 1. Den echten Kompass-Winkel berechnen (Roh + Offset)
         true_robot_heading = self._compute_true_heading()
 
-        # GPS sitzt 58cm hinter der Düse → Düsenposition in Fahrtrichtung vorrechnen
-        nozzle_x = cur_x + self.gps_to_nozzle_offset * math.cos(true_robot_heading)
-        nozzle_y = cur_y + self.gps_to_nozzle_offset * math.sin(true_robot_heading)
-
         # 2. Ziel-Wegpunkt berechnen
         goal_lat, goal_lon = self.waypoints[self.current_waypoint_index]
         goal_x, goal_y     = self._gps_to_xy(goal_lat, goal_lon)
 
-        dx = goal_x - nozzle_x
-        dy = goal_y - nozzle_y
-        distance = math.sqrt(dx**2 + dy**2)
+        # 3. Waypoint-Erkennung: GPS-Antennenposition (heading-unabhängig → kein Springen)
+        dx_ant = goal_x - cur_x
+        dy_ant = goal_y - cur_y
+        distance = math.sqrt(dx_ant**2 + dy_ant**2)
 
-        # 3. Waypoint erreicht?
         if distance < self.distance_tolerance:
             rospy.loginfo(f"Waypoint {self.current_waypoint_index + 1} erreicht!")
             self.current_waypoint_index += 1
@@ -332,7 +328,12 @@ class NavigationNode:
             time.sleep(5)
             return
 
-        # 4. Proportionaler Lenkungsbefehl basierend auf dem Winkel zum Ziel
+        # 4. Lenkwinkel: Düsenposition (GPS + Offset in Fahrtrichtung)
+        nozzle_x = cur_x + self.gps_to_nozzle_offset * math.cos(true_robot_heading)
+        nozzle_y = cur_y + self.gps_to_nozzle_offset * math.sin(true_robot_heading)
+        dx = goal_x - nozzle_x
+        dy = goal_y - nozzle_y
+
         target_heading = math.atan2(dy, dx)
         angle_to_goal =  target_heading - true_robot_heading # = heading_error
         angle_to_goal = math.atan2(
