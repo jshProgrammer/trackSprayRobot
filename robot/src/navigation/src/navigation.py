@@ -59,10 +59,11 @@ class NavigationNode:
 
         self.forward_velocity   = rospy.get_param('~forward_velocity', 0.5)
         self.angular_velocity   = rospy.get_param('~angular_velocity', 0.5)
-        self.distance_tolerance   = rospy.get_param('~distance_tolerance', 0.3)
+        self.distance_tolerance   = rospy.get_param('~distance_tolerance', 0.15)
+        # TODO is unused yet => probably remove
         self.angle_tolerance      = rospy.get_param('~angle_tolerance', 5.0)
         self.waypoints            = rospy.get_param('~waypoints', [])
-        self.gps_to_nozzle_offset = rospy.get_param('~gps_to_nozzle_offset', 0.30)
+        self.gps_to_nozzle_offset = rospy.get_param('~gps_to_nozzle_offset', 0.58)
         self.min_gps_status     = rospy.get_param('~min_gps_status', 0)
 
     def _init_state(self):
@@ -154,9 +155,9 @@ class NavigationNode:
         self.gps_quality = msg.data
         rospy.loginfo_throttle(5, f"GPS Quality = {self.gps_quality}")
 
-        if self.gps_quality >= 4 and not self.had_rtk_fix:
+        if self.gps_quality == 4 and not self.had_rtk_fix:
             self.had_rtk_fix = True
-            rospy.loginfo("RTK FIX oder FLOAT erreicht -> Navigation freigegeben")
+            rospy.loginfo("RTK FIX erreicht -> Navigation freigegeben")
 
     def _imu_callback(self, msg: Imu):
         q = msg.orientation
@@ -302,7 +303,7 @@ class NavigationNode:
         # 1. Den echten Kompass-Winkel berechnen (Roh + Offset)
         true_robot_heading = self._compute_true_heading()
 
-        # GPS sitzt 30cm hinter der Düse → Düsenposition in Fahrtrichtung vorrechnen
+        # GPS sitzt 58cm hinter der Düse → Düsenposition in Fahrtrichtung vorrechnen
         nozzle_x = cur_x + self.gps_to_nozzle_offset * math.cos(true_robot_heading)
         nozzle_y = cur_y + self.gps_to_nozzle_offset * math.sin(true_robot_heading)
 
@@ -320,7 +321,7 @@ class NavigationNode:
             self.current_waypoint_index += 1
             self.spray_pub.publish()
             self._publish(0.0, 0.0)
-            time.sleep(1)
+            time.sleep(5)
             return
 
         # 4. Proportionaler Lenkungsbefehl basierend auf dem Winkel zum Ziel
@@ -359,7 +360,11 @@ class NavigationNode:
             f"Angular={angular_cmd:.2f}"
         )
 
-        self._publish(0.1, angular_cmd)
+        if abs(angle_to_goal) > math.radians(45):
+            linear = 0.05
+        else:
+            linear = 0.1
+        self._publish(linear, angular_cmd)
 
     def _compute_true_heading(self) -> float:
         """Applies the calibration offset to the raw IMU heading to get the world-frame heading."""
