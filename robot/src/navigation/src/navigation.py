@@ -59,7 +59,7 @@ class NavigationNode:
 
         self.forward_velocity   = rospy.get_param('~forward_velocity', 0.5)
         self.angular_velocity   = rospy.get_param('~angular_velocity', 0.5)
-        self.distance_tolerance   = rospy.get_param('~distance_tolerance', 0.8)
+        self.distance_tolerance   = rospy.get_param('~distance_tolerance', 0.15)
         # TODO is unused yet => probably remove
         self.angle_tolerance      = rospy.get_param('~angle_tolerance', 5.0)
         self.waypoints            = rospy.get_param('~waypoints', [])
@@ -84,9 +84,6 @@ class NavigationNode:
         # ── Waypoint-State ───────────────────────────────────────────────
         self.current_waypoint_index = 0
         self.at_goal                = False
-
-        # ── GPS-Tiefpassfilter ────────────────────────────────────────────
-        self.gps_filter_alpha = 0.3   # EMA smoothing: lower = smoother, more lag
 
         # ── Auto-Kalibrierung (Kinematic Alignment) ──────────────────────
         self.nav_state = "WAITING_FOR_FIX"  # WAITING_FOR_FIX -> CALIBRATING -> NAVIGATING
@@ -129,13 +126,8 @@ class NavigationNode:
 
         self.has_fix = True # Fix wiederhergestellt / aktiv
 
-        if self.current_lat is None:
-            self.current_lat = msg.latitude
-            self.current_lon = msg.longitude
-        else:
-            a = self.gps_filter_alpha
-            self.current_lat = a * msg.latitude  + (1.0 - a) * self.current_lat
-            self.current_lon = a * msg.longitude + (1.0 - a) * self.current_lon
+        self.current_lat = msg.latitude
+        self.current_lon = msg.longitude
 
         rospy.loginfo_throttle(5, f"GPS Fix: lat={self.current_lat:.7f}, lon={self.current_lon:.7f}")
 
