@@ -14,7 +14,6 @@ import os
 import datetime
 import logging
 from std_msgs.msg import UInt8, Empty
-import time
 
 # ═══════════════════════════════════════════════════════════════════════
 # KONSTANTEN
@@ -53,13 +52,13 @@ class NavigationNode:
     # INIT
     # ════════════════════════════════════════════════════════════════════
     def _init_params(self):
-        self.wheel_base   = rospy.get_param('~wheel_base', 0.5)
+        self.wheel_base   = rospy.get_param('~wheel_base', 0.445)
         self.max_linear   = rospy.get_param('~max_linear', 1.0)
         self.max_angular  = rospy.get_param('~max_angular', 1.0)
 
         self.forward_velocity   = rospy.get_param('~forward_velocity', 0.5)
         self.angular_velocity   = rospy.get_param('~angular_velocity', 0.5)
-        self.distance_tolerance   = rospy.get_param('~distance_tolerance', 0.8)
+        self.distance_tolerance   = rospy.get_param('~distance_tolerance', 0.15)
         # TODO is unused yet => probably remove
         self.angle_tolerance      = rospy.get_param('~angle_tolerance', 5.0)
         self.waypoints            = rospy.get_param('~waypoints', [])
@@ -84,9 +83,17 @@ class NavigationNode:
         # ── Waypoint-State ───────────────────────────────────────────────
         self.current_waypoint_index = 0
         self.at_goal                = False
+        self.spray_until            = None   # rospy.Time: warten bis dieser Zeitpunkt
 
         # ── GPS-Tiefpassfilter ────────────────────────────────────────────
         self.gps_filter_alpha = 0.3   # EMA smoothing: lower = smoother, more lag
+
+        # ── Heading-Tiefpassfilter (nur für Düsen-Distanzberechnung) ─────
+        self.heading_smooth = None    # langsames EMA, verhindert Distanzsprünge
+
+        # ── Kontinuierliche Heading-Nachkalibrierung ─────────────────────
+        self.recalib_last_x = None   # GPS-Position beim letzten Kalibrierpunkt
+        self.recalib_last_y = None
 
         # ── Auto-Kalibrierung (Kinematic Alignment) ──────────────────────
         self.nav_state = "WAITING_FOR_FIX"  # WAITING_FOR_FIX -> CALIBRATING -> NAVIGATING
@@ -170,6 +177,16 @@ class NavigationNode:
     def _imu_callback(self, msg: Imu):
         q = msg.orientation
         self.heading = self._normalize_angle(quaternion_to_yaw(q))
+
+        if self.heading_smooth is None:
+            self.heading_smooth = self.heading
+        else:
+            # Kreisförmiger EMA: korrekte Behandlung des Winkelumbruchs
+            a = 0.02
+            self.heading_smooth = math.atan2(
+                a * math.sin(self.heading) + (1.0 - a) * math.sin(self.heading_smooth),
+                a * math.cos(self.heading) + (1.0 - a) * math.cos(self.heading_smooth),
+            )
 
         if not self.has_imu:
             self.has_imu = True
@@ -308,6 +325,13 @@ class NavigationNode:
     # ════════════════════════════════════════════════════════════════════
     def _handle_navigating(self, cur_x: float, cur_y: float):
         """Proportional heading controller that steers the robot toward the current waypoint."""
+        # Sprühwartezeit läuft noch → stehen bleiben
+        if self.spray_until is not None:
+            if rospy.Time.now() < self.spray_until:
+                self._publish(0.0, 0.0)
+                return
+            self.spray_until = None
+
         # 1. Den echten Kompass-Winkel berechnen (Roh + Offset)
         true_robot_heading = self._compute_true_heading()
 
@@ -315,9 +339,11 @@ class NavigationNode:
         goal_lat, goal_lon = self.waypoints[self.current_waypoint_index]
         goal_x, goal_y     = self._gps_to_xy(goal_lat, goal_lon)
 
-        # 3. Waypoint-Erkennung: GPS-Antennenposition (heading-unabhängig → kein Springen)
-        dx_ant = goal_x - cur_x
-        dy_ant = goal_y - cur_y
+        # 3. Waypoint-Erkennung: Düsenposition mit geglättetem Heading (kein Springen)
+        smooth_nozzle_x = cur_x + self.gps_to_nozzle_offset * math.cos(self.heading_smooth)
+        smooth_nozzle_y = cur_y + self.gps_to_nozzle_offset * math.sin(self.heading_smooth)
+        dx_ant = goal_x - smooth_nozzle_x
+        dy_ant = goal_y - smooth_nozzle_y
         distance = math.sqrt(dx_ant**2 + dy_ant**2)
 
         if distance < self.distance_tolerance:
@@ -325,7 +351,7 @@ class NavigationNode:
             self.current_waypoint_index += 1
             self.spray_pub.publish()
             self._publish(0.0, 0.0)
-            time.sleep(5)
+            self.spray_until = rospy.Time.now() + rospy.Duration(5.0)
             return
 
         # 4. Lenkwinkel: Düsenposition (GPS + Offset in Fahrtrichtung)
@@ -335,12 +361,7 @@ class NavigationNode:
         dy = goal_y - nozzle_y
 
         target_heading = math.atan2(dy, dx)
-        angle_to_goal =  target_heading - true_robot_heading # = heading_error
-        angle_to_goal = math.atan2(
-            math.sin(angle_to_goal),
-            math.cos(angle_to_goal)
-        )
-        #angle_deg     = math.degrees(angle_to_goal)
+        angle_to_goal  = self._normalize_angle(target_heading - true_robot_heading)
 
         debugOutput = (
             f"Wegpunkt {self.current_waypoint_index+1} | "
@@ -348,19 +369,13 @@ class NavigationNode:
             f"Robot-Angle: {math.degrees(true_robot_heading):.1f}° | "
             f"IMU-Roh: {math.degrees(self.heading):.1f}° | "
             f"Target-Angle: {math.degrees(target_heading):.1f}° | "
-            #f"Error: {angle_deg:.1f}°"
         )
         rospy.loginfo_throttle(1, debugOutput)
         self.logger.info(debugOutput)
 
         k_p = 1.0
-        angular_cmd = k_p * angle_to_goal
-
-        # Begrenzen
-        angular_cmd = max(
-            -self.angular_velocity,
-            min(self.angular_velocity, angular_cmd)
-        )
+        angular_cmd = max(-self.angular_velocity,
+                          min(self.angular_velocity, k_p * angle_to_goal))
 
         rospy.loginfo(
             f"Target={math.degrees(target_heading):.1f}° "
@@ -369,11 +384,51 @@ class NavigationNode:
             f"Angular={angular_cmd:.2f}"
         )
 
-        if abs(angle_to_goal) > math.radians(45):
-            linear = 0.05
-        else:
-            linear = 0.1
+        # Geschwindigkeit: langsamer bei großem Winkel- oder Entfernungsfehler
+        angle_factor    = max(0.0, 1.0 - abs(angle_to_goal) / math.radians(45))
+        distance_factor = min(1.0, distance / 1.5)
+        linear = self.forward_velocity * 0.2 * angle_factor * distance_factor
+        linear = max(0.03, linear)   # Mindestgeschwindigkeit damit der Roboter nicht steckt
         self._publish(linear, angular_cmd)
+
+        # 5. Kontinuierliche Heading-Nachkalibrierung aus dem GPS-Fahrvektor
+        #    Nur wenn der Roboter geradeaus fährt (kleiner Winkelfehler) → GPS-Spur ist valide
+        self._update_heading_offset(cur_x, cur_y, angle_to_goal)
+
+    def _update_heading_offset(self, cur_x: float, cur_y: float, angle_to_goal: float):
+        """Continuously recalibrates heading_offset from the GPS track while driving straight."""
+        if self.recalib_last_x is None:
+            self.recalib_last_x = cur_x
+            self.recalib_last_y = cur_y
+            return
+
+        # Nur bei kleinem Winkelfehler – sonst spiegelt die GPS-Spur die Kurvenfahrt wider
+        if abs(angle_to_goal) > math.radians(8):
+            return
+
+        dx = cur_x - self.recalib_last_x
+        dy = cur_y - self.recalib_last_y
+        dist = math.sqrt(dx**2 + dy**2)
+
+        if dist < 0.5:
+            return
+
+        gps_track    = math.atan2(dy, dx)
+        new_offset   = self._normalize_angle(gps_track - self.heading)
+
+        # Kreisförmiger EMA: korrekte Behandlung des Winkelumbruchs
+        a = 0.25
+        self.heading_offset = math.atan2(
+            a * math.sin(new_offset)        + (1.0 - a) * math.sin(self.heading_offset),
+            a * math.cos(new_offset)        + (1.0 - a) * math.cos(self.heading_offset),
+        )
+
+        rospy.loginfo_throttle(2,
+            f"Heading-Offset nachjustiert: {math.degrees(self.heading_offset):.1f}° "
+            f"(GPS-Spur: {math.degrees(gps_track):.1f}°, IMU-Roh: {math.degrees(self.heading):.1f}°)"
+        )
+        self.recalib_last_x = cur_x
+        self.recalib_last_y = cur_y
 
     def _compute_true_heading(self) -> float:
         """Applies the calibration offset to the raw IMU heading to get the world-frame heading."""
