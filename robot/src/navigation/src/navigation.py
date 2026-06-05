@@ -255,6 +255,7 @@ class NavigationNode:
         # Bewegung plausibilisieren
         max_reasonable_distance = calib_time * 1.0  # max 1 m/s
 
+        #TODO: always errors => probably remove
         # Sanity check: detect GPS jumps (e.g., >1 m/s unrealistic)
         max_reasonable_distance = calib_time * 1.0
         if distance_driven > max_reasonable_distance:
