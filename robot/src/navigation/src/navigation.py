@@ -280,14 +280,13 @@ class NavigationNode:
 
         calib_time = (rospy.Time.now() - self.calib_start_time).to_sec()
 
-        # Bewegung plausibilisieren
-        max_reasonable_distance = calib_time * 1.0  # max 1 m/s
-
-        # Sanity check: detect GPS jumps (e.g., >1 m/s unrealistic)
-        max_reasonable_distance = calib_time * 1.0
-        if distance_driven > max_reasonable_distance:
-            rospy.logwarn("GPS jump detected -> ignoring calibration")
-            return
+        # Sanity check: detect GPS jumps (e.g., >1 m/s unrealistic).
+        # Only active after 1s — before that, calib_time is too small for a meaningful speed estimate.
+        if calib_time > 1.0:
+            max_reasonable_distance = calib_time * 1.0
+            if distance_driven > max_reasonable_distance:
+                rospy.logwarn("GPS jump detected -> ignoring calibration")
+                return
 
         # Wenn wir 1.0 Meter gefahren sind, ist der GPS Vektor stabil genug
         if distance_driven >= 1.0 and calib_time > 3.0:
