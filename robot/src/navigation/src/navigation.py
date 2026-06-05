@@ -361,6 +361,7 @@ class NavigationNode:
             f"Angular={angular_cmd:.2f}"
         )
 
+        #TODO: attempt to reduce speed when distance <= 1.5
         if abs(angle_to_goal) > math.radians(45):
             linear = 0.05
         else:
