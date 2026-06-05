@@ -13,7 +13,8 @@ from sensor_msgs.msg import NavSatFix, NavSatStatus, Imu
 import os
 import datetime
 import logging
-from std_msgs.msg import UInt8
+from std_msgs.msg import UInt8, Empty
+import time
 
 # ═══════════════════════════════════════════════════════════════════════
 # KONSTANTEN
@@ -92,6 +93,7 @@ class NavigationNode:
 
     def _init_ros(self):
         self.cmd_vel_pub = rospy.Publisher('/cmd_vel_controll', Twist, queue_size=1)
+        self.spray_pub = rospy.Publisher("/cmd_spray", Empty, queue_size=1)
         rospy.Subscriber('gps/fix', NavSatFix, self._gps_callback)
         rospy.Subscriber('gps/quality', UInt8, self._gps_quality_callback)
         rospy.Subscriber('imu/data', Imu, self._imu_callback)
@@ -316,7 +318,9 @@ class NavigationNode:
         if distance < self.distance_tolerance:
             rospy.loginfo(f"Waypoint {self.current_waypoint_index + 1} erreicht!")
             self.current_waypoint_index += 1
+            self.spray_pub.publish()
             self._publish(0.0, 0.0)
+            time.sleep(1)
             return
 
         # 4. Proportionaler Lenkungsbefehl basierend auf dem Winkel zum Ziel
