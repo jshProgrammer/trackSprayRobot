@@ -11,7 +11,7 @@ Optimiert für: Geradeausfahrt trotz Schlupf, Matsch und Bodenunebenheiten.
 import rospy
 import numpy as np
 import math
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import Twist, PoseStamped
 from sensor_msgs.msg import Imu, NavSatFix
 from std_msgs.msg import UInt8
 class RTKStatus:
@@ -79,6 +79,23 @@ class EKFNoeticNode:
 
         self.cmd_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
 
+        # ── Gefilterte Pose + Frame-Ursprung für die Navigation ──────────
+        # Die Navigation konsumiert /ekf/pose (Position + Heading) statt rohem
+        # GPS. /gps/origin (latched) teilt den ENU-Meter-Frame-Ursprung, damit
+        # beide Nodes im selben Koordinatensystem rechnen.
+        self.pose_pub   = rospy.Publisher('/ekf/pose', PoseStamped, queue_size=10)
+        self.origin_pub = rospy.Publisher('/gps/origin', NavSatFix, queue_size=1, latch=True)
+
+        # ── Heading-Korrektur aus GPS-Fahrtrichtung (begrenzt Gyro-Drift) ─
+        # Der Gyro liefert nur die Drehrate -> integriert driftet das Heading.
+        # Die GPS-Fahrtrichtung (Course-over-Ground) ist eine absolute Welt-
+        # richtung und ankert θ kontinuierlich (nur bei sauberem FIXED + Fahrt).
+        self.yaw_course_min_speed = rospy.get_param('~yaw_course_min_speed', 0.05)  # m/s
+        self.yaw_course_min_disp  = rospy.get_param('~yaw_course_min_disp', 0.15)   # m
+        self.yaw_course_sigma     = rospy.get_param('~yaw_course_sigma', 0.03)      # m (Positionsrauschen)
+        self._last_course_x = None
+        self._last_course_y = None
+
         # Regler- und Filtertaktung fest auf 20 Hz (0.05s)
         rospy.Timer(rospy.Duration(0.05), self.control_loop)
         rospy.loginfo("EKF-Spurführungsregler aktualisiert und aktiv.")
@@ -93,6 +110,28 @@ class EKFNoeticNode:
         dlon = math.radians(lon - self._gps_origin_lon)
         ref  = math.radians(self._gps_origin_lat)
         return dlon * R * math.cos(ref), dlat * R
+
+    def _publish_origin(self):
+        """Publishes the ENU frame origin (latched) so navigation shares the frame."""
+        o = NavSatFix()
+        o.header.stamp = rospy.Time.now()
+        o.header.frame_id = "map"
+        o.latitude  = self._gps_origin_lat
+        o.longitude = self._gps_origin_lon
+        self.origin_pub.publish(o)
+
+    def _publish_pose(self):
+        """Publishes the fused EKF pose (x, y in ENU meters + yaw heading)."""
+        px, py, th, _ = self.x.flatten()
+        msg = PoseStamped()
+        msg.header.stamp    = rospy.Time.now()
+        msg.header.frame_id = "map"
+        msg.pose.position.x = float(px)
+        msg.pose.position.y = float(py)
+        # Yaw -> Quaternion (Roll=Pitch=0)
+        msg.pose.orientation.z = math.sin(th / 2.0)
+        msg.pose.orientation.w = math.cos(th / 2.0)
+        self.pose_pub.publish(msg)
 
     def _gps_quality_callback(self, msg: UInt8):
         """
@@ -173,18 +212,53 @@ class EKFNoeticNode:
                 self._gps_origin_lat = msg.latitude
                 self._gps_origin_lon = msg.longitude
                 rospy.loginfo(f"RTK-Nullpunkt kalibriert: {msg.latitude}, {msg.longitude}")
+                self._publish_origin()
             return
 
         gx, gy = self._latlon_to_meters(msg.latitude, msg.longitude)
 
         # ── HEBELARM-KOMPENSATION FÜR UNEBENHEITEN ──
-        # Nickt (Pitch) oder wankt (Roll) das Chassis in Schlaglöchern, 
+        # Nickt (Pitch) oder wankt (Roll) das Chassis in Schlaglöchern,
         # rechnen wir das virtuelle "Eiern" der hohen Antenne heraus.
         gx = gx - self.antenna_height * math.sin(self.pitch)
         gy = gy + self.antenna_height * math.sin(self.roll)
 
         # Reines Positions-Update via GPS
         self._ekf_update(z=np.array([[gx], [gy]]), H=self.H_gps, R=self.R_gps[rtk])
+
+        # ── HEADING-UPDATE AUS GPS-FAHRTRICHTUNG ────────────────────────
+        # Bei sauberem FIXED + ausreichender Vorwärtsfahrt liefert die
+        # zurückgelegte GPS-Strecke eine absolute Welt-Richtung, die das
+        # gyro-integrierte θ immer wieder einnordet (gegen Drift).
+        if rtk == RTKStatus.FIXED and abs(self.linear_speed) > self.yaw_course_min_speed:
+            if self._last_course_x is None:
+                self._last_course_x, self._last_course_y = gx, gy
+            else:
+                cdx = gx - self._last_course_x
+                cdy = gy - self._last_course_y
+                disp = math.hypot(cdx, cdy)
+                if disp >= self.yaw_course_min_disp:
+                    course = math.atan2(cdy, cdx)
+                    # Bei Rückwärtsfahrt zeigt der Kurs entgegen dem Heading.
+                    if self.linear_speed < 0:
+                        course = self._wrap(course + math.pi)
+                    # R skaliert mit der Strecke: kurze Strecke -> unsicherer Kurs.
+                    sigma = self.yaw_course_sigma / disp        # rad
+                    R_yaw = np.array([[sigma ** 2]])
+
+                    th_before = self.x[2, 0]
+                    self._ekf_update(
+                        z=np.array([[course]]),
+                        H=np.array([[0, 0, 1, 0]]),
+                        R=R_yaw,
+                        wrap_idx=0,
+                    )
+                    # Spur-Sollkurs um die θ-Korrektur mitziehen, damit der
+                    # Stanley-Regler nach dem Einnorden nicht gegensteuert.
+                    dth = self._wrap(self.x[2, 0] - th_before)
+                    self.target_heading = self._wrap(self.target_heading + dth)
+
+                    self._last_course_x, self._last_course_y = gx, gy
 
         # ── DEBUG ──────────────────────────────────────────────────────
         """rospy.loginfo_throttle(1.0,
@@ -238,6 +312,9 @@ class EKFNoeticNode:
 
         # 1. EKF-Schritt: Zustand mit real vergangenem dt prädizieren
         self._ekf_predict(v=self.linear_speed, w=self.imu_w, dt=dt)
+
+        # Gefilterte Pose für die Navigation veröffentlichen (Position + Heading)
+        self._publish_pose()
         """
         cmd = Twist()
         if self.is_moving:
