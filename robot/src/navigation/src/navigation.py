@@ -282,6 +282,15 @@ class NavigationNode:
         # Waypoint erreicht? -> Spray erst nach Bestätigung (Dwell + RTK FIXED).
         fix_ok = (not self.require_fix_for_spray) or (self.gps_quality == 4)
         if distance < self.distance_tolerance and fix_ok:
+            debugOutput = (f"Waypoint {self.current_waypoint_index + 1} bestätigt "
+                               f"(Distanz {distance:.2f}m -> SPRAY")
+            rospy.loginfo(debugOutput)
+            self.logger.info(debugOutput)
+            self.spray_pub.publish()
+            self.current_waypoint_index += 1
+            self.in_tol_since = None
+            self.pause_until = rospy.Time.now() + rospy.Duration(self.waypoint_pause_sec)
+            """
             self._publish(0.0, 0.0)  # anhalten und Position bestätigen lassen
             now = rospy.Time.now()
             if self.in_tol_since is None:
@@ -300,6 +309,7 @@ class NavigationNode:
                 rospy.loginfo_throttle(
                     0.5, f"In Toleranz, bestätige... {dwell:.1f}/{self.spray_confirm_sec:.1f}s")
             return
+            """
         else:
             self.in_tol_since = None
 
