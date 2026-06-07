@@ -37,6 +37,14 @@ navigation:
     # -1 = jeder Fix reicht  |  0 = normaler GPS-Fix  |  1 = nur RTK
   min_gps_status: 0
 
+  # ── RTK-Stabilität, Ausreißer-Schutz & Spray-Bestätigung ───────────────
+  rtk_stable_sec: 3.0          # s – so lange muss RTK ununterbrochen FIXED sein, bevor gestartet wird
+  gps_timeout: 2.0             # s – ohne frischen FIXED stoppt der Roboter (kein Blindfahren)
+  max_gps_jump: 0.30           # m – größere Positionssprünge pro Epoche werden verworfen
+  spray_confirm_sec: 0.5       # s – so lange muss der Roboter in Toleranz stehen, bevor gesprüht wird
+  require_fix_for_spray: true  # nur bei RTK FIXED (Quality 4) sprühen
+  waypoint_pause_sec: 5.0      # s – Pause nach dem Sprühen (non-blocking)
+
   waypoints:
     - [50.043672683333334, 10.207673066666667] # punkt hinten am parkplatz   bzw, 50.04367276666667, 10.20767285
     #- [50.0435229, 10.2085950] # neuer Punkt mit gelb Markiert

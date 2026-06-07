@@ -47,8 +47,11 @@ class LC29HDriver:
         return f"{checksum:02X}"
 
     def _configure_rate(self, rate_hz: int):
-        #rate_hz  = max(1, min(10, rate_hz))
-        rate_hz = 50
+        # Rate aus dem Parameter ~gps_rate_hz übernehmen (war fest auf 50 verdrahtet).
+        # Hinweis: Eine höhere Rate erhöht NICHT die Genauigkeit pro Messung – die
+        # RTCM-Korrekturen kommen mit ~1 Hz, höhere Raten sind eher extrapoliert und
+        # belasten die serielle Leitung. 10 Hz ist in der Praxis meist robuster.
+        rate_hz  = max(1, min(50, int(rate_hz)))
         interval = 1000 // rate_hz          # ms
         body     = f"PMTK220,{interval}"
         cmd      = f"${body}*{self._nmea_checksum(body)}\r\n"
