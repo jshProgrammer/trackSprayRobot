@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import rospy
 import serial
+import time
 import pynmea2
 from sensor_msgs.msg import NavSatFix, NavSatStatus
 from std_msgs.msg import UInt8MultiArray, String, UInt8
@@ -47,18 +48,33 @@ class LC29HDriver:
         return f"{checksum:02X}"
 
     def _configure_rate(self, rate_hz: int):
-        # Rate aus dem Parameter ~gps_rate_hz übernehmen (war fest auf 50 verdrahtet).
-        # Hinweis: Eine höhere Rate erhöht NICHT die Genauigkeit pro Messung – die
-        # RTCM-Korrekturen kommen mit ~1 Hz, höhere Raten sind eher extrapoliert und
-        # belasten die serielle Leitung. 10 Hz ist in der Praxis meist robuster.
         rate_hz  = max(1, min(50, int(rate_hz)))
         interval = 1000 // rate_hz          # ms
         body     = f"PMTK220,{interval}"
         cmd      = f"${body}*{self._nmea_checksum(body)}\r\n"
+
+        # Port braucht etwas Zeit nach dem Öffnen, sonst geht der Befehl verloren
+        time.sleep(0.5)
+        self.ser.reset_input_buffer()
         self.ser.write(cmd.encode('ascii'))
-        debugOutput = f"GPS update rate set to {rate_hz} Hz (interval={interval}ms): {cmd.strip()}"
-        self.logger.info(debugOutput)
-        rospy.loginfo(debugOutput)
+
+        # ACK lesen: $PMTK001,220,3 = accepted
+        deadline = time.time() + 2.0
+        ack_received = False
+        while time.time() < deadline:
+            line = self.ser.readline().decode('ascii', errors='replace')
+            if 'PMTK001,220' in line:
+                ack_received = True
+                break
+
+        if ack_received:
+            debugOutput = f"GPS rate set to {rate_hz} Hz (ACK received): {cmd.strip()}"
+            self.logger.info(debugOutput)
+            rospy.loginfo(debugOutput)
+        else:
+            debugOutput = f"GPS rate command sent but no ACK (module may still be at 1 Hz): {cmd.strip()}"
+            self.logger.warning(debugOutput)
+            rospy.logwarn(debugOutput)
 
     # =========================
     # Publisher initialization
