@@ -16,6 +16,7 @@ import os
 import datetime
 import logging
 from std_msgs.msg import UInt8, Empty
+from spray_counter import spray
 
 # ═══════════════════════════════════════════════════════════════════════
 # KONSTANTEN
@@ -447,6 +448,10 @@ class NavigationNode:
             rospy.loginfo(debugOutput)
             self.logger.info(debugOutput)
             self.spray_pub.publish()
+            rest = spray()
+            rospy.loginfo(
+                f"Noch {rest} Sprühstöße verfügbar"
+            )
             self.current_waypoint_index += 1
             self.in_tol_since = None
             self.pause_until = rospy.Time.now() + rospy.Duration(self.waypoint_pause_sec)
