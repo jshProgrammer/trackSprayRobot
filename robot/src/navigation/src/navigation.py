@@ -16,6 +16,7 @@ from std_msgs.msg import UInt8, String
 import os
 import datetime
 import logging
+from std_msgs.msg import UInt8, Empty
 
 # ═══════════════════════════════════════════════════════════════════════
 # KONSTANTEN
@@ -63,20 +64,32 @@ class NavigationNode:
 
         self.forward_velocity     = rospy.get_param('~forward_velocity', 0.5)
         self.angular_velocity     = rospy.get_param('~angular_velocity', 0.5)
-        self.distance_tolerance   = rospy.get_param('~distance_tolerance', 0.3)
+        self.distance_tolerance   = rospy.get_param('~distance_tolerance', 0.15)
+        # TODO is unused yet => probably remove
         self.angle_tolerance      = rospy.get_param('~angle_tolerance', 5.0)
         self.waypoints            = rospy.get_param('~waypoints', [])
-        self.gps_to_nozzle_offset = rospy.get_param('~gps_to_nozzle_offset', 0.30)
+        self.gps_to_nozzle_offset = rospy.get_param('~gps_to_nozzle_offset', 0.58)
         self.min_gps_status       = rospy.get_param('~min_gps_status', 0)
         self.obstacle_margin      = rospy.get_param('~obstacle_margin', 0.5)
+
+        # ── RTK-Stabilität, Ausreißer-Schutz & Spray-Bestätigung ──
+        self.rtk_stable_sec    = rospy.get_param('~rtk_stable_sec', 3.0)
+        self.gps_timeout       = rospy.get_param('~gps_timeout', 2.0)
+        self.max_gps_jump      = rospy.get_param('~max_gps_jump', 0.30)
+        self.spray_confirm_sec = rospy.get_param('~spray_confirm_sec', 0.5)
+        self.require_fix_for_spray = rospy.get_param('~require_fix_for_spray', True)
+        self.waypoint_pause_sec    = rospy.get_param('~waypoint_pause_sec', 5.0)
 
     def _init_state(self):
         # ── GPS-State ────────────────────────────────────────────────────
         self.current_lat  = None
         self.current_lon  = None
         self.has_fix      = False
-        self.had_rtk_fix  = False
+        self.rtk_ready    = False     # wird erst nach stabilem FIXED-Streak True
         self.gps_quality  = 0
+
+        self.fix_streak_start = None  # Beginn des aktuellen ununterbrochenen FIXED-Streaks
+        self.last_fix_time    = None  # Zeitpunkt der letzten akzeptierten FIXED-Position
 
         self.origin_lat   = None
         self.origin_lon   = None
@@ -88,6 +101,8 @@ class NavigationNode:
         # ── Waypoint-State ───────────────────────────────────────────────
         self.current_waypoint_index = 0
         self.at_goal                = False
+        self.in_tol_since           = None  # seit wann ununterbrochen in Toleranz (Spray-Bestätigung)
+        self.pause_until            = None  # non-blocking Pause nach dem Sprühen
 
         # ── Obstacle-State ───────────────────────────────────────────────
         self.obstacles    = []      # Liste von ObstacleBox
@@ -102,6 +117,7 @@ class NavigationNode:
 
     def _init_ros(self):
         self.cmd_vel_pub = rospy.Publisher('/cmd_vel_controll', Twist, queue_size=1)
+        self.spray_pub = rospy.Publisher("/cmd_spray", Empty, queue_size=1)
         rospy.Subscriber('gps/fix', NavSatFix, self._gps_callback)
         rospy.Subscriber('gps/quality', UInt8, self._gps_quality_callback)
         rospy.Subscriber('imu/data', Imu, self._imu_callback)
@@ -124,31 +140,66 @@ class NavigationNode:
     # CALLBACKS
     # ════════════════════════════════════════════════════════════════════
     def _gps_callback(self, msg: NavSatFix):
-        if msg.status.status < self.min_gps_status:
-            if self.has_fix:
-                debugOutput = f"GPS-Fix verloren! aktueller status={msg.status.status}"
-                rospy.logwarn_throttle(5, debugOutput)
+        rtk = self._parse_rtk_status(msg)
+
+        # ── Startup-Gate: RTK muss erst STABIL FIXED sein ─────────────────
+        # Ein einzelner FIXED-Treffer reicht NICHT. Wir verlangen einen
+        # ununterbrochenen FIXED-Streak von rtk_stable_sec Sekunden, bevor
+        # die Navigation freigegeben wird (deine Beobachtung: anfangs flackert
+        # FIXED/FLOAT, erst danach wird es regelmäßig).
+        if rtk == RTKStatus.FIXED:
+            if self.fix_streak_start is None:
+                self.fix_streak_start = rospy.Time.now()
+            streak = (rospy.Time.now() - self.fix_streak_start).to_sec()
+            if not self.rtk_ready and streak >= self.rtk_stable_sec:
+                self.rtk_ready = True
+                debugOutput = f"RTK stabil ({streak:.1f}s FIXED am Stück) -> Navigation freigegeben"
+                rospy.loginfo(debugOutput)
+                self.logger.info(debugOutput)
+        else:
+            # Jeder Nicht-FIXED (FLOAT/DGPS/GPS/NO_FIX) unterbricht den Streak.
+            if self.fix_streak_start is not None and not self.rtk_ready:
+                rospy.logwarn_throttle(5, "RTK-FIXED unterbrochen vor Freigabe – Streak zurückgesetzt")
+            self.fix_streak_start = None
+
+        # ── Position NUR aus RTK FIXED übernehmen ─────────────────────────
+        # FLOAT/DGPS/GPS verursachen 30-50cm-Sprünge. Statt sie zu nutzen,
+        # halten wir die letzte gute FIXED-Position; der gps_timeout-Check in
+        # _preconditions_met stoppt den Roboter, falls FIXED zu lange wegbleibt.
+        if rtk != RTKStatus.FIXED:
+            return
+
+        new_lat = float(msg.latitude)
+        new_lon = float(msg.longitude)
+
+        # ── Ausreißer-Filter: physikalisch unmögliche Sprünge verwerfen ───
+        # Bei max_linear m/s kann sich die Position pro Epoche nur begrenzt
+        # ändern. Größere Sprünge sind RTK-Artefakte und werden ignoriert.
+        if self.current_lat is not None and self.last_fix_time is not None:
+            dt   = (rospy.Time.now() - self.last_fix_time).to_sec()
+            jump = self._latlon_dist(self.current_lat, self.current_lon, new_lat, new_lon)
+            max_plausible = self.max_gps_jump + self.max_linear * max(dt, 0.0)
+            #TODO: tried 20 percent margin 
+            if jump > 1.2 * max_plausible:
+                debugOutput = (f"GPS-Sprung verworfen: {jump:.2f}m > erlaubt "
+                               f"{max_plausible:.2f}m (dt={dt:.2f}s)")
+                rospy.logwarn_throttle(2, debugOutput)
                 self.logger.warning(debugOutput)
-                self.has_fix = False
-            return
+                return
 
-        self.has_fix = True # Fix wiederhergestellt / aktiv
+        self.has_fix       = True
+        self.current_lat   = new_lat
+        self.current_lon   = new_lon
+        self.last_fix_time = rospy.Time.now()
 
-        self.current_lat = msg.latitude
-        self.current_lon = msg.longitude
-
-        rospy.loginfo_throttle(5, f"GPS Fix: lat={self.current_lat:.7f}, lon={self.current_lon:.7f}")
-
-        rtk              = self._parse_rtk_status(msg)
-
-        if rtk == RTKStatus.NO_FIX:
-            return
+        rospy.loginfo_throttle(5, f"GPS FIXED: lat={self.current_lat:.7f}, lon={self.current_lon:.7f}")
 
         if self.origin_lat is None:
-            if rtk == RTKStatus.FIXED or rtk == RTKStatus.FLOAT:
-                self.origin_lat = msg.latitude
-                self.origin_lon = msg.longitude
-                rospy.loginfo(f"RTK-Ursprung gesetzt: {msg.latitude}, {msg.longitude}")
+            self.origin_lat = new_lat
+            self.origin_lon = new_lon
+            debugOutput = f"RTK-Ursprung gesetzt: {new_lat}, {new_lon}"
+            rospy.loginfo(debugOutput)
+            self.logger.info(debugOutput)
 
     #TODO: extract => duplicate to gps node
     def _parse_rtk_status(self, msg):
@@ -160,12 +211,11 @@ class NavigationNode:
         else:             return RTKStatus.NO_FIX
 
     def _gps_quality_callback(self, msg):
+        # Wird als Quer-Check beim Sprühen genutzt (require_fix_for_spray).
+        # Die Navigations-Freigabe selbst läuft über den stabilen FIXED-Streak
+        # in _gps_callback (RTK-Status aus der Kovarianz der Fix-Nachricht).
         self.gps_quality = msg.data
         rospy.loginfo_throttle(5, f"GPS Quality = {self.gps_quality}")
-
-        if self.gps_quality >= 4 and not self.had_rtk_fix:
-            self.had_rtk_fix = True
-            rospy.loginfo("RTK FIX oder FLOAT erreicht -> Navigation freigegeben")
 
     def _obstacle_callback(self, msg: String):
         """
@@ -201,6 +251,14 @@ class NavigationNode:
     # ════════════════════════════════════════════════════════════════════
     # KOORDINATEN-UMRECHNUNG
     # ════════════════════════════════════════════════════════════════════
+    def _latlon_dist(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+        """Approximate planar distance in meters between two lat/lon points."""
+        dlat = math.radians(lat2 - lat1)
+        dlon = math.radians(lon2 - lon1)
+        x = dlon * EARTH_RADIUS * math.cos(math.radians(lat1))
+        y = dlat * EARTH_RADIUS
+        return math.hypot(x, y)
+
     def _gps_to_xy(self, lat: float, lon: float):
         dlat = math.radians(lat - self.origin_lat)
         dlon = math.radians(lon - self.origin_lon)
@@ -212,6 +270,14 @@ class NavigationNode:
     # HAUPTREGELSCHLEIFE (100 Hz)
     # ════════════════════════════════════════════════════════════════════
     def _control_loop(self, event):
+        # Non-blocking Pause nach dem Sprühen (ersetzt das blockierende time.sleep,
+        # das zuvor den 100-Hz-Timer-Thread für 5s einfror).
+        if self.pause_until is not None:
+            if rospy.Time.now() < self.pause_until:
+                self._publish(0.0, 0.0)
+                return
+            self.pause_until = None
+
         if not self._preconditions_met():
             return
 
@@ -226,12 +292,22 @@ class NavigationNode:
 
     def _preconditions_met(self) -> bool:
         """Returns False (and stops the robot) if any required condition is not yet satisfied."""
-        if not self.had_rtk_fix:
-            rospy.logwarn_throttle(2, "Warte auf ersten RTK-Fix (status=4)...")
+        if not self.rtk_ready:
+            rospy.logwarn_throttle(2, f"Warte auf stabilen RTK-FIXED ({self.rtk_stable_sec:.0f}s am Stück)...")
             self._publish(0.0, 0.0)
             return False
 
         if not self.has_fix:
+            self._publish(0.0, 0.0)
+            return False
+
+        # ── Frische-Check: ohne aktuelle FIXED-Position NICHT blind weiterfahren ──
+        # Während kurzer FLOAT-Phasen halten wir die letzte Position; bleibt FIXED
+        # länger als gps_timeout weg, wird gestoppt statt auf veralteter Position
+        # weiterzufahren.
+        if self.last_fix_time is None or \
+           (rospy.Time.now() - self.last_fix_time).to_sec() > self.gps_timeout:
+            rospy.logwarn_throttle(2, f"Kein frischer RTK-FIXED seit >{self.gps_timeout:.1f}s -> Stop")
             self._publish(0.0, 0.0)
             return False
 
@@ -280,16 +356,21 @@ class NavigationNode:
 
         calib_time = (rospy.Time.now() - self.calib_start_time).to_sec()
 
-        # Sanity check: detect GPS jumps (e.g., >1 m/s unrealistic).
-        # Only active after 1s — before that, calib_time is too small for a meaningful speed estimate.
-        if calib_time > 1.0:
-            max_reasonable_distance = calib_time * 1.0
-            if distance_driven > max_reasonable_distance:
-                rospy.logwarn("GPS jump detected -> ignoring calibration")
-                return
+        # Bewegung plausibilisieren
+        """
+        max_reasonable_distance = calib_time * 1.0  # max 1 m/s
+
+        #TODO: always errors => probably remove
+        # Sanity check: detect GPS jumps (e.g., >1 m/s unrealistic)
+        max_reasonable_distance = calib_time * 1.0
+        if distance_driven > max_reasonable_distance:
+            rospy.logwarn("GPS jump detected -> ignoring calibration")
+            return
+        """
 
         # Wenn wir 1.0 Meter gefahren sind, ist der GPS Vektor stabil genug
-        if distance_driven >= 1.0 and calib_time > 3.0:
+         #TODO: extract calibration distance to parameter
+        if distance_driven >= 3.0 and calib_time > 3.0:
             self._finalize_calibration(calib_dx, calib_dy, distance_driven)
         return
 
@@ -330,7 +411,7 @@ class NavigationNode:
         # 1. Den echten Kompass-Winkel berechnen (Roh + Offset)
         true_robot_heading = self._compute_true_heading()
 
-        # GPS sitzt 30cm hinter der Düse → Düsenposition in Fahrtrichtung vorrechnen
+        # GPS sitzt 58cm hinter der Düse → Düsenposition in Fahrtrichtung vorrechnen
         nozzle_x = cur_x + self.gps_to_nozzle_offset * math.cos(true_robot_heading)
         nozzle_y = cur_y + self.gps_to_nozzle_offset * math.sin(true_robot_heading)
 
@@ -347,12 +428,41 @@ class NavigationNode:
         dy = goal_y - nozzle_y
         distance = math.sqrt(dx**2 + dy**2)
 
-        # 4. Waypoint erreicht?
-        if distance < self.distance_tolerance:
-            rospy.loginfo(f"Waypoint {self.current_waypoint_index + 1} erreicht!")
+        # 3. Waypoint erreicht? -> Spray erst nach Bestätigung (Dwell + RTK FIXED),
+        #    damit ein einzelner Rausch-Fix nicht fälschlich auslöst.
+        fix_ok = (not self.require_fix_for_spray) or (self.gps_quality == 4)
+        if distance < self.distance_tolerance and fix_ok:
+            self._publish(0.0, 0.0)  # anhalten und Position bestätigen lassen
+            now = rospy.Time.now()
+            debugOutput = (f"Waypoint {self.current_waypoint_index + 1} bestätigt "
+                               f"(Distanz {distance:.2f}m) -> SPRAY")
+            rospy.loginfo(debugOutput)
+            self.logger.info(debugOutput)
+            self.spray_pub.publish()
             self.current_waypoint_index += 1
-            self._publish(0.0, 0.0)
+            self.in_tol_since = None
+            self.pause_until = rospy.Time.now() + rospy.Duration(self.waypoint_pause_sec)
+            """
+            if self.in_tol_since is None:
+                self.in_tol_since = now
+            dwell = (now - self.in_tol_since).to_sec()
+            if dwell >= self.spray_confirm_sec:
+                debugOutput = (f"Waypoint {self.current_waypoint_index + 1} bestätigt "
+                               f"(Distanz {distance:.2f}m, {dwell:.1f}s stabil) -> SPRAY")
+                rospy.loginfo(debugOutput)
+                self.logger.info(debugOutput)
+                self.spray_pub.publish()
+                self.current_waypoint_index += 1
+                self.in_tol_since = None
+                self.pause_until = rospy.Time.now() + rospy.Duration(self.waypoint_pause_sec)
+            else:
+                rospy.loginfo_throttle(
+                    0.5, f"In Toleranz, bestätige... {dwell:.1f}/{self.spray_confirm_sec:.1f}s")
             return
+            """
+        else:
+            # Toleranz verlassen oder kein FIXED -> Bestätigung zurücksetzen
+            self.in_tol_since = None
 
         # 5. Hindernischeck: liegt ein Hindernis auf dem Pfad zum Waypoint?
         blocking = self._blocking_obstacle(nozzle_x, nozzle_y, goal_x, goal_y)
@@ -488,7 +598,12 @@ class NavigationNode:
             f"Angular={angular_cmd:.2f}"
         )
 
-        self._publish(0.1, angular_cmd)
+        #TODO: attempt to reduce speed when distance <= 1.5
+        if abs(angle_to_goal) > math.radians(45):
+            linear = 0.05
+        else:
+            linear = 0.1
+        self._publish(linear, angular_cmd)
 
     def _compute_true_heading(self) -> float:
         """Applies the calibration offset to the raw IMU heading to get the world-frame heading."""

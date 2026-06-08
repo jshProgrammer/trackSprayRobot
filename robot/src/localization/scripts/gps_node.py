@@ -22,9 +22,10 @@ class LC29HDriver:
     # Receiving parameters from config
     # =========================
     def _init_params(self):
-        self.port     = rospy.get_param("~port",     "/dev/ttyUSB0")
-        self.baud     = rospy.get_param("~baud",     115200)
-        self.frame_id = rospy.get_param("~frame_id", "gps_link")
+        self.port       = rospy.get_param("~port",       "/dev/ttyUSB0")
+        self.baud       = rospy.get_param("~baud",       115200)
+        self.frame_id   = rospy.get_param("~frame_id",   "gps_link")
+        self.gps_rate_hz = rospy.get_param("~gps_rate_hz", 50)
  
     def _init_serial(self):
         try:
@@ -32,11 +33,32 @@ class LC29HDriver:
             debugOutput = f"LC29H connected on {self.port}"
             self.logger.info(debugOutput)
             rospy.loginfo(debugOutput)
+            self._configure_rate(self.gps_rate_hz)
         except Exception as e:
             debugOutput = f"Serial error: {e}"
             self.logger.error(debugOutput)
             rospy.logerr(debugOutput)
             raise
+
+    def _nmea_checksum(self, sentence: str) -> str:
+        checksum = 0
+        for ch in sentence:
+            checksum ^= ord(ch)
+        return f"{checksum:02X}"
+
+    def _configure_rate(self, rate_hz: int):
+        # Rate aus dem Parameter ~gps_rate_hz übernehmen (war fest auf 50 verdrahtet).
+        # Hinweis: Eine höhere Rate erhöht NICHT die Genauigkeit pro Messung – die
+        # RTCM-Korrekturen kommen mit ~1 Hz, höhere Raten sind eher extrapoliert und
+        # belasten die serielle Leitung. 10 Hz ist in der Praxis meist robuster.
+        rate_hz  = max(1, min(50, int(rate_hz)))
+        interval = 1000 // rate_hz          # ms
+        body     = f"PMTK220,{interval}"
+        cmd      = f"${body}*{self._nmea_checksum(body)}\r\n"
+        self.ser.write(cmd.encode('ascii'))
+        debugOutput = f"GPS update rate set to {rate_hz} Hz (interval={interval}ms): {cmd.strip()}"
+        self.logger.info(debugOutput)
+        rospy.loginfo(debugOutput)
 
     # =========================
     # Publisher initialization

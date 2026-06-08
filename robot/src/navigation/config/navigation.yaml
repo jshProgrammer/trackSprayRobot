@@ -30,18 +30,29 @@ navigation:
   angular_velocity:  0.5    # rad/s – Drehgeschwindigkeit
 
   #TODO: tried reducing this tolerance
-  distance_tolerance: 0.3   # m – Waypoint gilt als erreicht
+  distance_tolerance: 0.15   # m – Waypoint gilt als erreicht
   angle_tolerance:   45.0   # Grad – ab wann dreht der Roboter
 
     # ── GPS-Qualität ───────────────────────────────────────────────────────
     # -1 = jeder Fix reicht  |  0 = normaler GPS-Fix  |  1 = nur RTK
   min_gps_status: 0
 
+  # ── RTK-Stabilität, Ausreißer-Schutz & Spray-Bestätigung ───────────────
+  rtk_stable_sec: 3.0          # s – so lange muss RTK ununterbrochen FIXED sein, bevor gestartet wird
+  gps_timeout: 2.0             # s – ohne frischen FIXED stoppt der Roboter (kein Blindfahren)
+  max_gps_jump: 0.30           # m – größere Positionssprünge pro Epoche werden verworfen
+  spray_confirm_sec: 0.5       # s – so lange muss der Roboter in Toleranz stehen, bevor gesprüht wird
+  require_fix_for_spray: true  # nur bei RTK FIXED (Quality 4) sprühen
+  waypoint_pause_sec: 5.0      # s – Pause nach dem Sprühen (non-blocking)
+
   waypoints:
+    - [50.04369625, 10.207500116666667] # neuer PUnkten hinten am Parkplatz 8.6.
+    #- [50.043672683333334, 10.207673066666667] # punkt hinten am parkplatz   bzw, 50.04367276666667, 10.20767285
+    #- [50.0435229, 10.2085950] # neuer Punkt mit gelb Markiert
     #- [50.043619166666666, 10.208639116666667]
-    - [ 50.04362896666667, 10.208639033333334 ] # Punkt 1 markiert weiter vorne
-    - [50.043524033333334, 10.208603316666666] # Punkt 2 markiert weiter hinten
-    - [50.04374381666667, 10.20852155] # Punkt 3 nicht markiert!
+    #- [ 50.04362896666667, 10.208639033333334 ] # Punkt 1 markiert weiter vorne
+    #- [50.043524033333334, 10.208603316666666] # Punkt 2 markiert weiter hinten
+    # - [50.04374381666667, 10.20852155] # Punkt 3 nicht markiert!
     #- [50.04415898333333, 10.208487183333334]
     #- [50.04414233333333, 10.208408566666666]
     #- [50.04359431666666, 10.207527716666666]
