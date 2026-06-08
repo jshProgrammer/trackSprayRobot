@@ -167,7 +167,8 @@ class NavigationNode:
             dt   = (rospy.Time.now() - self.last_fix_time).to_sec()
             jump = self._latlon_dist(self.current_lat, self.current_lon, new_lat, new_lon)
             max_plausible = self.max_gps_jump + self.max_linear * max(dt, 0.0)
-            if jump > max_plausible:
+            #TODO: tried 20 percent margin 
+            if jump > 1.2 * max_plausible:
                 debugOutput = (f"GPS-Sprung verworfen: {jump:.2f}m > erlaubt "
                                f"{max_plausible:.2f}m (dt={dt:.2f}s)")
                 rospy.logwarn_throttle(2, debugOutput)
@@ -395,6 +396,15 @@ class NavigationNode:
         if distance < self.distance_tolerance and fix_ok:
             self._publish(0.0, 0.0)  # anhalten und Position bestätigen lassen
             now = rospy.Time.now()
+            debugOutput = (f"Waypoint {self.current_waypoint_index + 1} bestätigt "
+                               f"(Distanz {distance:.2f}m) -> SPRAY")
+            rospy.loginfo(debugOutput)
+            self.logger.info(debugOutput)
+            self.spray_pub.publish()
+            self.current_waypoint_index += 1
+            self.in_tol_since = None
+            self.pause_until = rospy.Time.now() + rospy.Duration(self.waypoint_pause_sec)
+            """
             if self.in_tol_since is None:
                 self.in_tol_since = now
             dwell = (now - self.in_tol_since).to_sec()
@@ -411,6 +421,7 @@ class NavigationNode:
                 rospy.loginfo_throttle(
                     0.5, f"In Toleranz, bestätige... {dwell:.1f}/{self.spray_confirm_sec:.1f}s")
             return
+            """
         else:
             # Toleranz verlassen oder kein FIXED -> Bestätigung zurücksetzen
             self.in_tol_since = None
