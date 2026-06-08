@@ -66,7 +66,9 @@ class NavigationNode:
         self.angular_velocity     = rospy.get_param('~angular_velocity', 0.5)
         self.distance_tolerance   = rospy.get_param('~distance_tolerance', 0.15)
         #TODO: might have to be changed
-        self.waypoint_tolerance   = rospy.get_param('~waypoint_tolerance', 0.7)
+        self.waypoint_tolerance   = rospy.get_param('~waypoint_tolerance', 0.15)
+        # Bypass-Punkte müssen nicht exakt getroffen werden (kein Spray) -> größere Toleranz
+        self.bypass_tolerance     = rospy.get_param('~bypass_tolerance', 0.7)
         # TODO is unused yet => probably remove
         self.angle_tolerance      = rospy.get_param('~angle_tolerance', 5.0)
         self.waypoints            = rospy.get_param('~waypoints', [])
@@ -503,7 +505,9 @@ class NavigationNode:
         bx, by = self.bypass_targets[0]
         dist = math.sqrt((bx - cur_x) ** 2 + (by - cur_y) ** 2)
 
-        if dist < self.distance_tolerance:
+        rospy.loginfo(f"Distanz to bypass: {dist}")
+
+        if dist < self.bypass_tolerance:
             self.bypass_targets.pop(0)
             if self.bypass_targets:
                 rospy.loginfo("1. Umfahrungspunkt erreicht — weiter zum 2. Punkt")
