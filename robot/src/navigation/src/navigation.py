@@ -65,12 +65,14 @@ class NavigationNode:
         self.forward_velocity     = rospy.get_param('~forward_velocity', 0.5)
         self.angular_velocity     = rospy.get_param('~angular_velocity', 0.5)
         self.distance_tolerance   = rospy.get_param('~distance_tolerance', 0.15)
+        #TODO: might have to be changed
+        self.waypoint_tolerance   = rospy.get_param('~waypoint_tolerance', 0.7)
         # TODO is unused yet => probably remove
         self.angle_tolerance      = rospy.get_param('~angle_tolerance', 5.0)
         self.waypoints            = rospy.get_param('~waypoints', [])
         self.gps_to_nozzle_offset = rospy.get_param('~gps_to_nozzle_offset', 0.58)
         self.min_gps_status       = rospy.get_param('~min_gps_status', 0)
-        self.obstacle_margin      = rospy.get_param('~obstacle_margin', 0.5)
+        self.obstacle_margin      = rospy.get_param('~obstacle_margin', 1.0)
 
         # ── RTK-Stabilität, Ausreißer-Schutz & Spray-Bestätigung ──
         self.rtk_stable_sec    = rospy.get_param('~rtk_stable_sec', 3.0)
@@ -106,7 +108,7 @@ class NavigationNode:
 
         # ── Obstacle-State ───────────────────────────────────────────────
         self.obstacles    = []      # Liste von ObstacleBox
-        self.bypass_target = None   # (x, y) in lokalen Koordinaten, oder None
+        self.bypass_targets = []    # Liste von (x, y) Umfahrungspunkten (leer = keine Umfahrung)
 
         # ── Auto-Kalibrierung (Kinematic Alignment) ──────────────────────
         self.nav_state = "WAITING_FOR_FIX"  # WAITING_FOR_FIX -> CALIBRATING -> NAVIGATING
@@ -415,8 +417,8 @@ class NavigationNode:
         nozzle_x = cur_x + self.gps_to_nozzle_offset * math.cos(true_robot_heading)
         nozzle_y = cur_y + self.gps_to_nozzle_offset * math.sin(true_robot_heading)
 
-        # 2. Umfahrung aktiv? → erst zum Bypass-Punkt fahren
-        if self.bypass_target is not None:
+        # 2. Umfahrung aktiv? → erst die Bypass-Punkte der Reihe nach abfahren
+        if self.bypass_targets:
             self._navigate_to_bypass(nozzle_x, nozzle_y)
             return
 
@@ -431,7 +433,7 @@ class NavigationNode:
         # 3. Waypoint erreicht? -> Spray erst nach Bestätigung (Dwell + RTK FIXED),
         #    damit ein einzelner Rausch-Fix nicht fälschlich auslöst.
         fix_ok = (not self.require_fix_for_spray) or (self.gps_quality == 4)
-        if distance < self.distance_tolerance and fix_ok:
+        if distance < self.waypoint_tolerance and fix_ok:
             self._publish(0.0, 0.0)  # anhalten und Position bestätigen lassen
             now = rospy.Time.now()
             debugOutput = (f"Waypoint {self.current_waypoint_index + 1} bestätigt "
@@ -464,16 +466,18 @@ class NavigationNode:
             # Toleranz verlassen oder kein FIXED -> Bestätigung zurücksetzen
             self.in_tol_since = None
 
+        #TODO obstacle check has to be done in navigate_to_bypass as well
         # 5. Hindernischeck: liegt ein Hindernis auf dem Pfad zum Waypoint?
         blocking = self._blocking_obstacle(nozzle_x, nozzle_y, goal_x, goal_y)
         if blocking is not None:
-            bypass = self._compute_bypass_point(nozzle_x, nozzle_y, goal_x, goal_y, blocking)
-            self.bypass_target = bypass
+            self.bypass_targets = self._compute_bypass_points(
+                nozzle_x, nozzle_y, goal_x, goal_y, blocking)
+            pts = ", ".join(f"({x:.2f}, {y:.2f})" for x, y in self.bypass_targets)
             rospy.logwarn(
                 f"Hindernis auf dem Pfad zu Waypoint {self.current_waypoint_index + 1} — "
-                f"Umfahrungspunkt gesetzt: ({bypass[0]:.2f}, {bypass[1]:.2f})"
+                f"2 Umfahrungspunkte gesetzt: {pts}"
             )
-            self.logger.warning(f"Bypass gesetzt: {bypass}")
+            self.logger.warning(f"Bypass-Punkte gesetzt: {self.bypass_targets}")
             self._publish(0.0, 0.0)
             return
 
@@ -481,17 +485,21 @@ class NavigationNode:
         self._steer_towards(nozzle_x, nozzle_y, goal_x, goal_y, label=f"Wegpunkt {self.current_waypoint_index+1}")
 
     def _navigate_to_bypass(self, cur_x: float, cur_y: float):
-        """Fährt zum gesetzten Umfahrungspunkt; löscht ihn wenn erreicht."""
-        bx, by = self.bypass_target
+        """Fährt die Umfahrungspunkte der Reihe nach ab; entfernt jeden, wenn erreicht."""
+        bx, by = self.bypass_targets[0]
         dist = math.sqrt((bx - cur_x) ** 2 + (by - cur_y) ** 2)
 
         if dist < self.distance_tolerance:
-            rospy.loginfo("Umfahrungspunkt erreicht — weiter zum Waypoint")
-            self.bypass_target = None
+            self.bypass_targets.pop(0)
+            if self.bypass_targets:
+                rospy.loginfo("1. Umfahrungspunkt erreicht — weiter zum 2. Punkt")
+            else:
+                rospy.loginfo("Umfahrung abgeschlossen — weiter zum Waypoint")
             self._publish(0.0, 0.0)
             return
 
-        self._steer_towards(cur_x, cur_y, bx, by, label="Bypass")
+        label = f"Bypass {'1/2' if len(self.bypass_targets) == 2 else '2/2'}"
+        self._steer_towards(cur_x, cur_y, bx, by, label=label)
 
     # ════════════════════════════════════════════════════════════════════
     # HINDERNISERKENNUNG & UMFAHRUNG
@@ -539,31 +547,50 @@ class NavigationNode:
 
         return t_min <= t_max
 
-    def _compute_bypass_point(self, robot_x, robot_y, goal_x, goal_y, obs: ObstacleBox):
+    def _compute_bypass_points(self, robot_x, robot_y, goal_x, goal_y, obs: ObstacleBox):
         """
-        Wählt den besten Eckpunkt des (mit obstacle_margin erweiterten) Begrenzungsrahmens
-        als Umfahrungspunkt: minimale Gesamtstrecke Roboter → Ecke → Ziel.
+        Liefert ZWEI Umfahrungspunkte statt einem: seitlich am Anfang und am Ende
+        des Hindernisses. Der Roboter fährt dadurch parallel am Hindernis entlang,
+        statt nur eine einzelne Ecke zu schneiden.
+
+        Vorgehen:
+          1. Bounding-Box um obstacle_margin erweitern (4 Eckpunkte).
+          2. Anhand der Haupt-Fahrtrichtung (x- oder y-dominant) die beiden
+             möglichen Seiten (je ein Eckpaar) bestimmen.
+          3. Das Eckpaar mit der kürzeren Gesamtstrecke Roboter → P1 → P2 → Ziel
+             wählen und nach Nähe zum Roboter ordnen (näheren Punkt zuerst).
         """
         m = self.obstacle_margin
         ox_min, oy_min = self._gps_to_xy(obs.lat_min, obs.lon_min)
         ox_max, oy_max = self._gps_to_xy(obs.lat_max, obs.lon_max)
+        ox_min -= m
+        oy_min -= m
+        ox_max += m
+        oy_max += m
 
-        corners = [
-            (ox_min - m, oy_min - m),
-            (ox_min - m, oy_max + m),
-            (ox_max + m, oy_min - m),
-            (ox_max + m, oy_max + m),
-        ]
+        A = (ox_min, oy_min)   # unten-links
+        B = (ox_min, oy_max)   # oben-links
+        C = (ox_max, oy_min)   # unten-rechts
+        D = (ox_max, oy_max)   # oben-rechts
 
-        best, best_cost = None, float('inf')
-        for cx, cy in corners:
-            cost = (math.sqrt((cx - robot_x)**2 + (cy - robot_y)**2) +
-                    math.sqrt((cx - goal_x)**2  + (cy - goal_y)**2))
-            if cost < best_cost:
-                best_cost = cost
-                best = (cx, cy)
+        if abs(goal_x - robot_x) >= abs(goal_y - robot_y):
+            # Fahrt vorwiegend entlang x → seitlich = oben / unten
+            side_a, side_b = [B, D], [A, C]
+        else:
+            # Fahrt vorwiegend entlang y → seitlich = rechts / links
+            side_a, side_b = [C, D], [A, B]
 
-        return best
+        def ordered_with_cost(pair):
+            # Den näher am Roboter liegenden Punkt zuerst anfahren
+            p1, p2 = sorted(pair, key=lambda p: (p[0] - robot_x) ** 2 + (p[1] - robot_y) ** 2)
+            cost = (math.hypot(p1[0] - robot_x, p1[1] - robot_y) +
+                    math.hypot(p2[0] - p1[0],   p2[1] - p1[1]) +
+                    math.hypot(goal_x - p2[0],  goal_y - p2[1]))
+            return cost, [p1, p2]
+
+        cost_a, ordered_a = ordered_with_cost(side_a)
+        cost_b, ordered_b = ordered_with_cost(side_b)
+        return ordered_a if cost_a <= cost_b else ordered_b
 
     def _steer_towards(self, cur_x: float, cur_y: float,
                        target_x: float, target_y: float, label: str = ""):
@@ -599,7 +626,7 @@ class NavigationNode:
         )
 
         #TODO: attempt to reduce speed when distance <= 1.5
-        if abs(angle_to_goal) > math.radians(45):
+        if abs(angle_error) > math.radians(45):
             linear = 0.05
         else:
             linear = 0.1
