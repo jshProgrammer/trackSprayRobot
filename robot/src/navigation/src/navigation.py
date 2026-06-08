@@ -337,7 +337,8 @@ class NavigationNode:
         """
 
         # Wenn wir 1.0 Meter gefahren sind, ist der GPS Vektor stabil genug
-        if distance_driven >= 1.0 and calib_time > 3.0:
+         #TODO: extract calibration distance to parameter
+        if distance_driven >= 3.0 and calib_time > 3.0:
             self._finalize_calibration(calib_dx, calib_dy, distance_driven)
         return
 
