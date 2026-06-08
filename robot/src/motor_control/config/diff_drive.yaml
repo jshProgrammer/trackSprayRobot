@@ -6,5 +6,5 @@ diff_drive_controller:
   wheel_radius: 0.1
   publish_rate: 1000.0
   cmd_vel_timeout: 0.5
-  distance_tolerance: 0.1
+  distance_tolerance: 0.15
   angle_tolerance: 5.0
