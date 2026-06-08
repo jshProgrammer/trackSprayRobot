@@ -33,14 +33,14 @@ navigation:
   distance_tolerance: 0.15   # m – Waypoint gilt als erreicht
   angle_tolerance:   45.0   # Grad – ab wann dreht der Roboter
 
-  # ── RTK-Stabilität, Pose-Frische & Dead-Reckoning ──────────────────────
-  rtk_stable_sec: 3.0          # s – so lange muss RTK ununterbrochen FIXED sein, bevor gestartet wird
-  max_deadreckon_sec: 5.0      # s – so lange darf der EKF max. ohne frischen FIXED per IMU weiterrechnen, dann Stop
-  odom_timeout: 0.5            # s – EKF-Pose (/ekf/pose) darf nicht älter sein, sonst Stop (EKF-Node tot)
-  calib_distance: 1.0          # m – Geradeausfahrt beim Start, damit der EKF das Heading über den GPS-Kurs einnordet
-  steering_kp: 1.0             # P-Verstärkung der Lenkung
+    # ── GPS-Qualität ───────────────────────────────────────────────────────
+    # -1 = jeder Fix reicht  |  0 = normaler GPS-Fix  |  1 = nur RTK
+  min_gps_status: 0
 
-  # ── Spray-Bestätigung ──────────────────────────────────────────────────
+  # ── RTK-Stabilität, Ausreißer-Schutz & Spray-Bestätigung ───────────────
+  rtk_stable_sec: 3.0          # s – so lange muss RTK ununterbrochen FIXED sein, bevor gestartet wird
+  gps_timeout: 2.0             # s – ohne frischen FIXED stoppt der Roboter (kein Blindfahren)
+  max_gps_jump: 0.30           # m – größere Positionssprünge pro Epoche werden verworfen
   spray_confirm_sec: 0.5       # s – so lange muss der Roboter in Toleranz stehen, bevor gesprüht wird
   require_fix_for_spray: true  # nur bei RTK FIXED (Quality 4) sprühen
   waypoint_pause_sec: 5.0      # s – Pause nach dem Sprühen (non-blocking)
