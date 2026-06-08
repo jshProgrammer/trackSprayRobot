@@ -80,6 +80,7 @@ class NavigationNode:
         self.spray_confirm_sec = rospy.get_param('~spray_confirm_sec', 0.5)
         self.require_fix_for_spray = rospy.get_param('~require_fix_for_spray', True)
         self.waypoint_pause_sec    = rospy.get_param('~waypoint_pause_sec', 5.0)
+        self.bypass_pause_sec      = rospy.get_param('~bypass_pause_sec', 5.0)
 
     def _init_state(self):
         # ── GPS-State ────────────────────────────────────────────────────
@@ -508,10 +509,11 @@ class NavigationNode:
             self.bypass_targets.pop(0)
             if self.bypass_targets:
                 rospy.loginfo("1. Umfahrungspunkt erreicht — weiter zum 2. Punkt")
-                self._publish(0.0, 0.0)
             else:
                 rospy.loginfo("Umfahrung abgeschlossen — weiter zum Waypoint")
+            # An jedem Bypass-Punkt kurz stehen bleiben (non-blocking Pause)
             self._publish(0.0, 0.0)
+            self.pause_until = rospy.Time.now() + rospy.Duration(self.bypass_pause_sec)
             return
 
         label = f"Bypass {'1/2' if len(self.bypass_targets) == 2 else '2/2'}"
