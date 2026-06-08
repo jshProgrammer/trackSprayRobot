@@ -64,13 +64,10 @@ class NavigationNode:
 
         self.forward_velocity     = rospy.get_param('~forward_velocity', 0.5)
         self.angular_velocity     = rospy.get_param('~angular_velocity', 0.5)
-        self.distance_tolerance   = rospy.get_param('~distance_tolerance', 0.15)
         #TODO: might have to be changed
-        self.waypoint_tolerance   = rospy.get_param('~waypoint_tolerance', 0.15)
+        self.waypoint_tolerance   = rospy.get_param('~waypoint_tolerance', 0.3)
         # Bypass-Punkte müssen nicht exakt getroffen werden (kein Spray) -> größere Toleranz
         self.bypass_tolerance     = rospy.get_param('~bypass_tolerance', 0.7)
-        # TODO is unused yet => probably remove
-        self.angle_tolerance      = rospy.get_param('~angle_tolerance', 5.0)
         self.waypoints            = rospy.get_param('~waypoints', [])
         self.gps_to_nozzle_offset = rospy.get_param('~gps_to_nozzle_offset', 0.58)
         self.min_gps_status       = rospy.get_param('~min_gps_status', 0)
@@ -370,7 +367,7 @@ class NavigationNode:
         calib_speed = max(0.1, self.forward_velocity * 0.5)
         self._publish(calib_speed, 0.0)
 
-        rospy.loginfo_throttle(0.5, f"Kalibriere... Gefahren: {distance_driven:.2f}m / 1.50m")
+        rospy.loginfo_throttle(0.5, f"Kalibriere... Gefahren: {distance_driven:.2f}m / 3.0m")
 
         calib_time = (rospy.Time.now() - self.calib_start_time).to_sec()
 
@@ -386,7 +383,7 @@ class NavigationNode:
             return
         """
 
-        # Wenn wir 1.0 Meter gefahren sind, ist der GPS Vektor stabil genug
+        # Wenn wir 3.0 Meter gefahren sind, ist der GPS Vektor stabil genug
          #TODO: extract calibration distance to parameter
         if distance_driven >= 3.0 and calib_time > 3.0:
             self._finalize_calibration(calib_dx, calib_dy, distance_driven)
@@ -505,12 +502,13 @@ class NavigationNode:
         bx, by = self.bypass_targets[0]
         dist = math.sqrt((bx - cur_x) ** 2 + (by - cur_y) ** 2)
 
-        rospy.loginfo(f"Distanz to bypass: {dist}")
+        rospy.loginfo_throttle(1, f"Distanz to bypass: {dist}")
 
         if dist < self.bypass_tolerance:
             self.bypass_targets.pop(0)
             if self.bypass_targets:
                 rospy.loginfo("1. Umfahrungspunkt erreicht — weiter zum 2. Punkt")
+                self._publish(0.0, 0.0)
             else:
                 rospy.loginfo("Umfahrung abgeschlossen — weiter zum Waypoint")
             self._publish(0.0, 0.0)

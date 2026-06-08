@@ -30,8 +30,7 @@ navigation:
   angular_velocity:  0.5    # rad/s – Drehgeschwindigkeit
 
   #TODO: tried reducing this tolerance
-  distance_tolerance: 0.15   # m – Waypoint gilt als erreicht
-  angle_tolerance:   45.0   # Grad – ab wann dreht der Roboter
+  waypoint_tolerance: 0.3   # m – Waypoint gilt als erreicht
 
     # ── GPS-Qualität ───────────────────────────────────────────────────────
     # -1 = jeder Fix reicht  |  0 = normaler GPS-Fix  |  1 = nur RTK

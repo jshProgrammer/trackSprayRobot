@@ -114,6 +114,7 @@ class MotorDriver:
         left_speed  = linear - (angular * self.wheel_base / 2)
         right_speed = linear + (angular * self.wheel_base / 2)
 
+        """
         rospy.loginfo_throttle(
             1,
             f"PWM_DRIVE linear={linear} "
@@ -121,6 +122,7 @@ class MotorDriver:
             f"left_speed_before={left_speed}"
             f"right_speed_before={right_speed}"
         )
+        """
 
         # 3. DIE SICHERHEITS-LEINE (Hardware-Deckel)
         # Anstatt 1.0 (100% Vollgas) begrenzen wir die Motoren hier hart auf z.B. 0.3 (30% Leistung).
