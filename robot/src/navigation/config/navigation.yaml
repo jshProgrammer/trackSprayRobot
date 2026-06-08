@@ -42,6 +42,7 @@ navigation:
   max_gps_jump: 0.30           # m – größere Positionssprünge pro Epoche werden verworfen
   spray_confirm_sec: 0.5       # s – so lange muss der Roboter in Toleranz stehen, bevor gesprüht wird
   require_fix_for_spray: true  # nur bei RTK FIXED (Quality 4) sprühen
+  obstacle_margin: 1.0         # m – Abstand zum Hindernis beim Pfadcheck
   waypoint_pause_sec: 5.0      # s – Pause nach dem Sprühen (non-blocking)
 
   waypoints:

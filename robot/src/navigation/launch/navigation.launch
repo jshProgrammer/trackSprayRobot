@@ -1,7 +1,6 @@
 <launch>
     <rosparam file="$(find navigation)/config/navigation.yaml" command="load"/>
-	
-    <node name="navigation" pkg="navigation" type="navigation.py" output="screen">
-    <rosparam file="$(find navigation)/config/navigation.yaml" command="load"/>
-</node>
+
+    <node name="navigation" pkg="navigation" type="navigation.py" output="screen"/>
+    <node name="obstacle_avoidance" pkg="navigation" type="obstacle_avoidance_node.py" output="screen"/>
 </launch>

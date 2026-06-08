@@ -9,9 +9,8 @@ Fahrtstrecke automatisch zur GPS-Weltkarte ausgerichtet (Kinematic Alignment).
 import json
 import math
 import rospy
-from collections import namedtuple
 from geometry_msgs.msg import Twist
-from sensor_msgs.msg import NavSatFix, NavSatStatus, Imu
+from sensor_msgs.msg import NavSatFix, Imu
 from std_msgs.msg import UInt8, String
 import os
 import datetime
@@ -22,9 +21,6 @@ from std_msgs.msg import UInt8, Empty
 # KONSTANTEN
 # ═══════════════════════════════════════════════════════════════════════
 EARTH_RADIUS = 6_371_000.0   # m
-
-# Hindernis-Begrenzungsrahmen in GPS-Koordinaten (vom Frontend)
-ObstacleBox = namedtuple('ObstacleBox', ['lat_min', 'lon_min', 'lat_max', 'lon_max'])
 
 class RTKStatus:
     NO_FIX = 0
@@ -106,22 +102,7 @@ class NavigationNode:
         self.in_tol_since           = None  # seit wann ununterbrochen in Toleranz (Spray-Bestätigung)
         self.pause_until            = None  # non-blocking Pause nach dem Sprühen
 
-        # ── Obstacle-State ───────────────────────────────────────────────
-        # HARDCODED Test-Hindernis: achsenparallele Bounding-Box um die 4 Punkte
-        # Punkt 1 50.043728116666664, 10.207527733333333
-        # Punkt 2 50.043730733333334, 10.207512883333333
-        # Punkt 3 50.0437202, 10.207508833333334
-        # Punkt 4 50.04371426666667, 10.207525716666666
-        self.obstacles    = [       # Liste von ObstacleBox
-            ObstacleBox(
-                lat_min=50.04371426666667,    # P4
-                lon_min=10.207508833333334,   # P3
-                lat_max=50.043730733333334,   # P2
-                lon_max=10.207527733333333,   # P1
-            ),
-        ]
-        # Hinweis: /obstacle_map (_obstacle_callback) überschreibt diese Liste,
-        # sobald eine Nachricht eintrifft. Für den Test nichts darauf publishen.
+        # ── Obstacle Bypass-State ─────────────────────────────────────────
         self.bypass_targets = []    # Liste von (x, y) Umfahrungspunkten (leer = keine Umfahrung)
 
         # ── Auto-Kalibrierung (Kinematic Alignment) ──────────────────────
@@ -134,10 +115,11 @@ class NavigationNode:
     def _init_ros(self):
         self.cmd_vel_pub = rospy.Publisher('/cmd_vel_controll', Twist, queue_size=1)
         self.spray_pub = rospy.Publisher("/cmd_spray", Empty, queue_size=1)
+        self.bypass_request_pub = rospy.Publisher('/obstacle_bypass_request', String, queue_size=1)
         rospy.Subscriber('gps/fix', NavSatFix, self._gps_callback)
         rospy.Subscriber('gps/quality', UInt8, self._gps_quality_callback)
         rospy.Subscriber('imu/data', Imu, self._imu_callback)
-        rospy.Subscriber('/obstacle_map', String, self._obstacle_callback)
+        rospy.Subscriber('/obstacle_bypass_response', String, self._bypass_response_callback)
         rospy.Timer(rospy.Duration(0.01), self._control_loop)   # 100 Hz
 
     def init_logging(self):
@@ -233,25 +215,23 @@ class NavigationNode:
         self.gps_quality = msg.data
         rospy.loginfo_throttle(5, f"GPS Quality = {self.gps_quality}")
 
-    def _obstacle_callback(self, msg: String):
-        """
-        Erwartet JSON-Array mit Hindernissen:
-        [{"lat_min": ..., "lon_min": ..., "lat_max": ..., "lon_max": ...}, ...]
-        """
+    def _bypass_response_callback(self, msg: String):
         try:
             data = json.loads(msg.data)
-            self.obstacles = [
-                ObstacleBox(
-                    lat_min=min(o['lat_min'], o['lat_max']),
-                    lon_min=min(o['lon_min'], o['lon_max']),
-                    lat_max=max(o['lat_min'], o['lat_max']),
-                    lon_max=max(o['lon_min'], o['lon_max']),
-                )
-                for o in data
+            if isinstance(data, dict) and 'bypass_targets' in data:
+                raw_targets = data['bypass_targets']
+            elif isinstance(data, list):
+                raw_targets = data
+            else:
+                raise ValueError("Ungültiges Bypass-Response-Format")
+
+            self.bypass_targets = [
+                (float(p[0]), float(p[1]))
+                for p in raw_targets
             ]
-            rospy.loginfo_throttle(10, f"Obstacle Map aktualisiert: {len(self.obstacles)} Hindernisse")
-        except (json.JSONDecodeError, KeyError) as e:
-            rospy.logwarn(f"Ungültige Obstacle Map: {e}")
+            rospy.loginfo_throttle(2, f"Bypass-Antwort erhalten: {len(self.bypass_targets)} Punkte")
+        except (json.JSONDecodeError, ValueError, TypeError, KeyError) as e:
+            rospy.logwarn(f"Ungültige Bypass-Antwort: {e}")
 
     def _imu_callback(self, msg: Imu):
         q = msg.orientation
@@ -440,6 +420,18 @@ class NavigationNode:
         goal_lat, goal_lon = self.waypoints[self.current_waypoint_index]
         goal_x, goal_y     = self._gps_to_xy(goal_lat, goal_lon)
 
+        # 4. Anfrage an die Obstacle-Avoidance-Node senden
+        request = {
+            'robot_x': nozzle_x,
+            'robot_y': nozzle_y,
+            'goal_x': goal_x,
+            'goal_y': goal_y,
+            'origin_lat': self.origin_lat,
+            'origin_lon': self.origin_lon,
+            'obstacle_margin': self.obstacle_margin,
+        }
+        self.bypass_request_pub.publish(String(data=json.dumps(request)))
+
         dx = goal_x - nozzle_x
         dy = goal_y - nozzle_y
         distance = math.sqrt(dx**2 + dy**2)
@@ -480,22 +472,7 @@ class NavigationNode:
             # Toleranz verlassen oder kein FIXED -> Bestätigung zurücksetzen
             self.in_tol_since = None
 
-        #TODO obstacle check has to be done in navigate_to_bypass as well
-        # 5. Hindernischeck: liegt ein Hindernis auf dem Pfad zum Waypoint?
-        blocking = self._blocking_obstacle(nozzle_x, nozzle_y, goal_x, goal_y)
-        if blocking is not None:
-            self.bypass_targets = self._compute_bypass_points(
-                nozzle_x, nozzle_y, goal_x, goal_y, blocking)
-            pts = ", ".join(f"({x:.2f}, {y:.2f})" for x, y in self.bypass_targets)
-            rospy.logwarn(
-                f"Hindernis auf dem Pfad zu Waypoint {self.current_waypoint_index + 1} — "
-                f"2 Umfahrungspunkte gesetzt: {pts}"
-            )
-            self.logger.warning(f"Bypass-Punkte gesetzt: {self.bypass_targets}")
-            self._publish(0.0, 0.0)
-            return
-
-        # 6. Proportionaler Lenkungsbefehl basierend auf dem Winkel zum Ziel
+        # 5. Proportionaler Lenkungsbefehl basierend auf dem Winkel zum Ziel
         self._steer_towards(nozzle_x, nozzle_y, goal_x, goal_y, label=f"Wegpunkt {self.current_waypoint_index+1}")
 
     def _navigate_to_bypass(self, cur_x: float, cur_y: float):
@@ -522,93 +499,6 @@ class NavigationNode:
     # ════════════════════════════════════════════════════════════════════
     # HINDERNISERKENNUNG & UMFAHRUNG
     # ════════════════════════════════════════════════════════════════════
-    def _blocking_obstacle(self, p1x, p1y, p2x, p2y):
-        """
-        Gibt das erste Hindernis zurück, dessen erweiterter Begrenzungsrahmen
-        den Pfad von (p1) nach (p2) schneidet — oder None.
-        """
-        if not self.obstacles or self.origin_lat is None:
-            return None
-
-        for obs in self.obstacles:
-            ox_min, oy_min = self._gps_to_xy(obs.lat_min, obs.lon_min)
-            ox_max, oy_max = self._gps_to_xy(obs.lat_max, obs.lon_max)
-
-            # Begrenzungsrahmen um obstacle_margin erweitern
-            m = self.obstacle_margin
-            if self._segment_intersects_rect(p1x, p1y, p2x, p2y,
-                                              ox_min - m, oy_min - m,
-                                              ox_max + m, oy_max + m):
-                return obs
-        return None
-
-    def _segment_intersects_rect(self, p1x, p1y, p2x, p2y,
-                                  x_min, y_min, x_max, y_max) -> bool:
-        """
-        Liang-Barsky Algorithmus: prüft ob das Liniensegment (p1→p2)
-        das Rechteck [x_min, x_max] × [y_min, y_max] schneidet.
-        """
-        dx = p2x - p1x
-        dy = p2y - p1y
-        p = [-dx,  dx, -dy,  dy]
-        q = [p1x - x_min, x_max - p1x, p1y - y_min, y_max - p1y]
-
-        t_min, t_max = 0.0, 1.0
-        for pi, qi in zip(p, q):
-            if pi == 0.0:
-                if qi < 0.0:
-                    return False
-            elif pi < 0.0:
-                t_min = max(t_min, qi / pi)
-            else:
-                t_max = min(t_max, qi / pi)
-
-        return t_min <= t_max
-
-    def _compute_bypass_points(self, robot_x, robot_y, goal_x, goal_y, obs: ObstacleBox):
-        """
-        Liefert ZWEI Umfahrungspunkte statt einem: seitlich am Anfang und am Ende
-        des Hindernisses. Der Roboter fährt dadurch parallel am Hindernis entlang,
-        statt nur eine einzelne Ecke zu schneiden.
-
-        Vorgehen:
-          1. Bounding-Box um obstacle_margin erweitern (4 Eckpunkte).
-          2. Anhand der Haupt-Fahrtrichtung (x- oder y-dominant) die beiden
-             möglichen Seiten (je ein Eckpaar) bestimmen.
-          3. Das Eckpaar mit der kürzeren Gesamtstrecke Roboter → P1 → P2 → Ziel
-             wählen und nach Nähe zum Roboter ordnen (näheren Punkt zuerst).
-        """
-        m = self.obstacle_margin
-        ox_min, oy_min = self._gps_to_xy(obs.lat_min, obs.lon_min)
-        ox_max, oy_max = self._gps_to_xy(obs.lat_max, obs.lon_max)
-        ox_min -= m
-        oy_min -= m
-        ox_max += m
-        oy_max += m
-
-        A = (ox_min, oy_min)   # unten-links
-        B = (ox_min, oy_max)   # oben-links
-        C = (ox_max, oy_min)   # unten-rechts
-        D = (ox_max, oy_max)   # oben-rechts
-
-        if abs(goal_x - robot_x) >= abs(goal_y - robot_y):
-            # Fahrt vorwiegend entlang x → seitlich = oben / unten
-            side_a, side_b = [B, D], [A, C]
-        else:
-            # Fahrt vorwiegend entlang y → seitlich = rechts / links
-            side_a, side_b = [C, D], [A, B]
-
-        def ordered_with_cost(pair):
-            # Den näher am Roboter liegenden Punkt zuerst anfahren
-            p1, p2 = sorted(pair, key=lambda p: (p[0] - robot_x) ** 2 + (p[1] - robot_y) ** 2)
-            cost = (math.hypot(p1[0] - robot_x, p1[1] - robot_y) +
-                    math.hypot(p2[0] - p1[0],   p2[1] - p1[1]) +
-                    math.hypot(goal_x - p2[0],  goal_y - p2[1]))
-            return cost, [p1, p2]
-
-        cost_a, ordered_a = ordered_with_cost(side_a)
-        cost_b, ordered_b = ordered_with_cost(side_b)
-        return ordered_a if cost_a <= cost_b else ordered_b
 
     def _steer_towards(self, cur_x: float, cur_y: float,
                        target_x: float, target_y: float, label: str = ""):
