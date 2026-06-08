@@ -129,11 +129,22 @@ class MotorDriver:
 
         max_speed = max(abs(left_speed), abs(right_speed))
 
-        if max_speed > MAX_SAFE_PWM:
-            scale = MAX_SAFE_PWM / max_speed
+        # Step 1: scale down so max absolute value = MAX_SAFE_PWM (preserves L/R ratio)
+        max_abs = max(abs(left_speed), abs(right_speed))
+        if max_abs > MAX_SAFE_PWM:
+            left_speed  = left_speed  / max_abs * MAX_SAFE_PWM
+            right_speed = right_speed / max_abs * MAX_SAFE_PWM
 
-            left_speed *= scale
-            right_speed *= scale
+        # Step 2: if hardware can't reverse, shift both up so the slower side = 0
+        min_speed = min(left_speed, right_speed)
+        if min_speed < 0:
+            left_speed  -= min_speed
+            right_speed -= min_speed
+            # re-scale after shift so we stay within MAX_SAFE_PWM
+            max_speed = max(left_speed, right_speed)
+            if max_speed > MAX_SAFE_PWM:
+                left_speed  = left_speed  / max_speed * MAX_SAFE_PWM
+                right_speed = right_speed / max_speed * MAX_SAFE_PWM
 
         rospy.loginfo_throttle(
                 1,
