@@ -26,7 +26,7 @@ class LC29HDriver:
         self.port       = rospy.get_param("~port",       "/dev/ttyUSB0")
         self.baud       = rospy.get_param("~baud",       115200)
         self.frame_id   = rospy.get_param("~frame_id",   "gps_link")
-        self.gps_rate_hz = rospy.get_param("~gps_rate_hz", 50)
+        self.gps_rate_hz = rospy.get_param("~gps_rate_hz", 10)
  
     def _init_serial(self):
         try:
@@ -48,7 +48,7 @@ class LC29HDriver:
         return f"{checksum:02X}"
 
     def _configure_rate(self, rate_hz: int):
-        rate_hz  = max(1, min(50, int(rate_hz)))
+        rate_hz  = max(1, min(10, int(rate_hz)))
         interval = 1000 // rate_hz          # ms
         body     = f"PMTK220,{interval}"
         cmd      = f"${body}*{self._nmea_checksum(body)}\r\n"

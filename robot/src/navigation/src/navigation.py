@@ -160,6 +160,7 @@ class NavigationNode:
         new_lat = float(msg.latitude)
         new_lon = float(msg.longitude)
 
+        
         # ── Ausreißer-Filter: physikalisch unmögliche Sprünge verwerfen ───
         # Bei max_linear m/s kann sich die Position pro Epoche nur begrenzt
         # ändern. Größere Sprünge sind RTK-Artefakte und werden ignoriert.
@@ -167,12 +168,13 @@ class NavigationNode:
             dt   = (rospy.Time.now() - self.last_fix_time).to_sec()
             jump = self._latlon_dist(self.current_lat, self.current_lon, new_lat, new_lon)
             max_plausible = self.max_gps_jump + self.max_linear * max(dt, 0.0)
-            if jump > max_plausible:
+            if jump > 1.2 * max_plausible:
                 debugOutput = (f"GPS-Sprung verworfen: {jump:.2f}m > erlaubt "
                                f"{max_plausible:.2f}m (dt={dt:.2f}s)")
                 rospy.logwarn_throttle(2, debugOutput)
                 self.logger.warning(debugOutput)
                 return
+        
 
         self.has_fix       = True
         self.current_lat   = new_lat
@@ -319,7 +321,7 @@ class NavigationNode:
         calib_speed = max(0.1, self.forward_velocity * 0.5)
         self._publish(calib_speed, 0.0)
 
-        rospy.loginfo_throttle(0.5, f"Kalibriere... Gefahren: {distance_driven:.2f}m / 1.50m")
+        rospy.loginfo_throttle(0.5, f"Kalibriere... Gefahren: {distance_driven:.2f}m / 5.0m")
 
         calib_time = (rospy.Time.now() - self.calib_start_time).to_sec()
 
@@ -336,7 +338,7 @@ class NavigationNode:
         """
 
         # Wenn wir 1.0 Meter gefahren sind, ist der GPS Vektor stabil genug
-        if distance_driven >= 1.0 and calib_time > 3.0:
+        if distance_driven >= 5.0 and calib_time > 3.0:
             self._finalize_calibration(calib_dx, calib_dy, distance_driven)
         return
 
@@ -395,6 +397,16 @@ class NavigationNode:
         if distance < self.distance_tolerance and fix_ok:
             self._publish(0.0, 0.0)  # anhalten und Position bestätigen lassen
             now = rospy.Time.now()
+
+            debugOutput = (f"Waypoint {self.current_waypoint_index + 1} bestätigt (Distanz {distance:.2f}m) -> SPRAY")
+            rospy.loginfo(debugOutput)
+            self.logger.info(debugOutput)
+            self.spray_pub.publish()
+            self.current_waypoint_index += 1
+            self.in_tol_since = None
+            self.pause_until = rospy.Time.now() + rospy.Duration(self.waypoint_pause_sec)
+            
+            """
             if self.in_tol_since is None:
                 self.in_tol_since = now
             dwell = (now - self.in_tol_since).to_sec()
@@ -411,6 +423,7 @@ class NavigationNode:
                 rospy.loginfo_throttle(
                     0.5, f"In Toleranz, bestätige... {dwell:.1f}/{self.spray_confirm_sec:.1f}s")
             return
+            """
         else:
             # Toleranz verlassen oder kein FIXED -> Bestätigung zurücksetzen
             self.in_tol_since = None
@@ -453,7 +466,9 @@ class NavigationNode:
 
         #TODO: attempt to reduce speed when distance <= 1.5
         if abs(angle_to_goal) > math.radians(45):
-            linear = 0.05
+            linear = 0.0
+        elif distance < 1.5:
+            linear = 0.02
         else:
             linear = 0.1
         self._publish(linear, angular_cmd)

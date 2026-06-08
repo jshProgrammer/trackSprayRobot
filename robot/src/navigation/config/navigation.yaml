@@ -46,7 +46,8 @@ navigation:
   waypoint_pause_sec: 5.0      # s – Pause nach dem Sprühen (non-blocking)
 
   waypoints:
-    - [50.043672683333334, 10.207673066666667] # punkt hinten am parkplatz   bzw, 50.04367276666667, 10.20767285
+    - [50.04369625, 10.207500116666667] # neuer PUnkten hinten am Parkplatz 8.6.
+    # - [50.043672683333334, 10.207673066666667] # punkt hinten am parkplatz   bzw, 50.04367276666667, 10.20767285
     #- [50.0435229, 10.2085950] # neuer Punkt mit gelb Markiert
     #- [50.043619166666666, 10.208639116666667]
     #- [ 50.04362896666667, 10.208639033333334 ] # Punkt 1 markiert weiter vorne
