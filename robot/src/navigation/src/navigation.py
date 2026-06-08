@@ -107,7 +107,21 @@ class NavigationNode:
         self.pause_until            = None  # non-blocking Pause nach dem Sprühen
 
         # ── Obstacle-State ───────────────────────────────────────────────
-        self.obstacles    = []      # Liste von ObstacleBox
+        # HARDCODED Test-Hindernis: achsenparallele Bounding-Box um die 4 Punkte
+        # Punkt 1 50.043728116666664, 10.207527733333333
+        # Punkt 2 50.043730733333334, 10.207512883333333
+        # Punkt 3 50.0437202, 10.207508833333334
+        # Punkt 4 50.04371426666667, 10.207525716666666
+        self.obstacles    = [       # Liste von ObstacleBox
+            ObstacleBox(
+                lat_min=50.04371426666667,    # P4
+                lon_min=10.207508833333334,   # P3
+                lat_max=50.043730733333334,   # P2
+                lon_max=10.207527733333333,   # P1
+            ),
+        ]
+        # Hinweis: /obstacle_map (_obstacle_callback) überschreibt diese Liste,
+        # sobald eine Nachricht eintrifft. Für den Test nichts darauf publishen.
         self.bypass_targets = []    # Liste von (x, y) Umfahrungspunkten (leer = keine Umfahrung)
 
         # ── Auto-Kalibrierung (Kinematic Alignment) ──────────────────────
