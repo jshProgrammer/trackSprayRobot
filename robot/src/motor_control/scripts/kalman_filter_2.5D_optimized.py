@@ -2,10 +2,6 @@
 """
 2.5D EKF + Stanley-Spurführungsregler für ROS Noetic.
 Optimiert für: Geradeausfahrt trotz Schlupf, Matsch und Bodenunebenheiten.
-
-Änderungen:
-  - Mathematischen Fehler im imu_callback behoben (kein falsches Yaw-Update mehr).
-  - IMU dient jetzt rein als Sensor-Lieferant für Prädiktion und Hebelarm-Kompensation.
 """
 
 import rospy
@@ -14,6 +10,7 @@ import math
 from geometry_msgs.msg import Twist
 from sensor_msgs.msg import Imu, NavSatFix
 from std_msgs.msg import UInt8
+
 class RTKStatus:
     NO_FIX = 0
     FLOAT  = 1
@@ -27,47 +24,44 @@ class EKFNoeticNode:
         self._gps_origin_lat = None
         self._gps_origin_lon = None
         self._rtk_status = RTKStatus.NO_FIX
-        self.gps_quality = 0  # from /gps/quality topic from gps_node
+        self.gps_quality = 0 
 
         # ── EKF-Zustand: [x, y, θ, v] ──────────────────────────────────
         self.x = np.zeros((4, 1))
         self.P = np.diag([1.0, 1.0, 0.1, 0.5])
 
-        # Q (Prozessrauschen) bei Schlupf höher angesetzt, damit der Filter
-        # bei durchdrehenden Rädern primär den realen Messungen vertraut.
         self.Q = np.diag([0.06, 0.06, 0.02, 0.06])
 
-        # Messrauschen für GPS (RTK-Zustände)
         self.R_gps = {
             RTKStatus.FIXED: np.diag([0.0004, 0.0004]),  # RTK-Fixed (2 cm)
             RTKStatus.FLOAT: np.diag([0.09,   0.09  ]),  # RTK-Float (30 cm)
         }
 
-        # Da wir kein absolutes Yaw-Update mehr fahren, benötigen wir nur die GPS-Messmatrix
         self.H_gps = np.array([[1, 0, 0, 0], [0, 1, 0, 0]])
+
+        # NEU: Zwischenspeicher für den letzten GPS-Punkt zur Richtungsschätzung
+        self._last_gx = None
+        self._last_gy = None
 
         # ── Regler & Spur-Parameter ───────────────────────────────────
         self.linear_speed = 0.0
         self.commanded_angular_speed = 0.0
         self.is_moving = False
         
-        # Startpunkt der virtuellen Führungsschiene
         self.line_start_x = 0.0
         self.line_start_y = 0.0
         self.target_heading = 0.0
 
-        # Stanley-Regler-Gewinne
-        self.kp_heading = 2.5   # Zieht die Fahrzeugnase schnell wieder geradeaus
-        self.kd_heading = 0.4   # Dämpft die Lenkung, verhindert Schwingen des Hecks
-        self.kp_track = 2.0     # Hartes Gegensteuern bei seitlichem Abdriften (Querablage)
+        self.kp_heading = 2.5   
+        self.kd_heading = 0.4   
+        self.kp_track = 2.0     
         
         self._last_heading_error = 0.0
         self.last_time = rospy.Time.now()
 
         # ── Sensordaten-Zwischenspeicher ───────────────────────────────
-        self.imu_w = 0.0          # Drehrate um Z-Achse (w)
-        #TODO: probably change back
-        self.antenna_height =0.26 #0.26 # GPS-Antennenhöhe in Metern
+        self.imu_w = 0.0          
+        self.antenna_height = 0.26 
         self.roll = 0.0
         self.pitch = 0.0
 
@@ -79,9 +73,8 @@ class EKFNoeticNode:
 
         self.cmd_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
 
-        # Regler- und Filtertaktung fest auf 20 Hz (0.05s)
         rospy.Timer(rospy.Duration(0.05), self.control_loop)
-        rospy.loginfo("EKF-Spurführungsregler aktualisiert und aktiv.")
+        rospy.loginfo("EKF-Spurführungsregler inklusive GPS-Heading-Update aktiv.")
 
     @staticmethod
     def _wrap(a):
@@ -95,17 +88,9 @@ class EKFNoeticNode:
         return dlon * R * math.cos(ref), dlat * R
 
     def _gps_quality_callback(self, msg: UInt8):
-        """
-        Receive RTK quality directly from gps_node (consistent with navigation.py).
-        Quality mapping: 4=RTK FIXED (cm), 5=RTK FLOAT (dm), 2=DGPS, 1=GPS, else=NO_FIX
-        """
         self.gps_quality = msg.data
 
     def _parse_rtk_status(self, msg):
-        """
-        Convert gps_quality to RTK status for EKF.
-        No more magic thresholds or reverse-engineering from covariance!
-        """
         if self.gps_quality == 4:
             return RTKStatus.FIXED
         elif self.gps_quality == 5:
@@ -124,43 +109,19 @@ class EKFNoeticNode:
         was_moving = self.is_moving
         self.is_moving = abs(msg.linear.x) > 0.01 or abs(msg.angular.z) > 0.01
 
-        # Dynamisches Einrasten der Spur, sobald sich der Roboter in Bewegung setzt
-        #if not self.is_moving and abs(msg.linear.x) > 0.01:
-        if self.is_moving and (not was_moving or (msg.angular.z == 0 and not hasattr(self, '_last_was_steering'))):
-            self.line_start_x = self.x[0, 0]
-            self.line_start_y = self.x[1, 0]
-            self.target_heading = self.x[2, 0] 
-            #TODO: only add to log file
-            #rospy.loginfo(f"Spur eingerastet! Kurs: {math.degrees(self.target_heading):.1f}°")
-
-        #self.linear_speed = msg.linear.x
-        #self.is_moving = abs(msg.linear.x) > 0.01
-       
+        # GEÄNDERT: Wir rasten die Spur hier NICHT mehr blind ein, da das Heading 
+        # im Stillstand ungenau sein kann. Das Einrasten passiert jetzt kontrolliert 
+        # in der control_loop, sobald wir echte Fahrdaten haben.
+        if self.is_moving and not was_moving:
+            self._spur_anforderung = True 
 
     def imu_callback(self, msg: Imu):
-        """
-        IMU-Callback ohne Magnetometer.
-
-        Gyroskop Z  → imu_w  (für EKF-Prädiktion)
-        Accelerometer → Roll & Pitch via Gravitations-Projektion
-                        (für GPS-Antenne-Hebelarm-Kompensation)
-
-        Die imu_node encodiert nur Yaw in der Quaternion (x=0, y=0),
-        daher extrahieren wir Roll/Pitch aus echten Beschleunigungsdaten.
-        """
-        # Drehrate um Z-Achse (wird in _ekf_predict für Yaw-Integration genutzt)
         self.imu_w = msg.angular_velocity.z
-
-        # Roll & Pitch aus Erdbeschleunigung schätzen.
-        # Gültig solange keine starke Linearbeschleunigung vorhanden ist –
-        # bei einem Feldroboter mit moderaten Geschwindigkeiten ausreichend genau.
         ax = msg.linear_acceleration.x
         ay = msg.linear_acceleration.y
         az = msg.linear_acceleration.z
 
-        # Pitch: Neigung nach vorne/hinten
         self.pitch = math.atan2(-ax, math.sqrt(ay**2 + az**2))
-        # Roll: Neigung zur Seite
         self.roll  = math.atan2(ay, az)
 
     def gps_callback(self, msg):
@@ -177,31 +138,53 @@ class EKFNoeticNode:
 
         gx, gy = self._latlon_to_meters(msg.latitude, msg.longitude)
 
-        # ── HEBELARM-KOMPENSATION FÜR UNEBENHEITEN ──
-        # Nickt (Pitch) oder wankt (Roll) das Chassis in Schlaglöchern, 
-        # rechnen wir das virtuelle "Eiern" der hohen Antenne heraus.
+        # Hebelarm-Kompensation für Unebenheiten
         gx = gx - self.antenna_height * math.sin(self.pitch)
         gy = gy + self.antenna_height * math.sin(self.roll)
 
-        # Reines Positions-Update via GPS
-        self._ekf_update(z=np.array([[gx], [gy]]), H=self.H_gps, R=self.R_gps[rtk])
+        # ── NEU: HEADING AUS GPS-BEWEGUNG ABLEITEN (Course over Ground) ──
+        if self._last_gx is not None and self.linear_speed > 0.1:
+            dx = gx - self._last_gx
+            dy = gy - self._last_gy
+            dist = math.hypot(dx, dy)
+            
+            # Wenn die Bewegung größer als 3 cm ist, berechnen wir den Fahrtvektor
+            if dist > 0.03:
+                gps_yaw = math.atan2(dy, dx)
+                
+                # Erweitertes EKF-Update für X, Y UND Yaw
+                z = np.array([[gx], [gy], [gps_yaw]])
+                H_3d = np.array([
+                    [1, 0, 0, 0],
+                    [0, 1, 0, 0],
+                    [0, 0, 1, 0]
+                ])
+                
+                # Heading-Messrauschen gewichten (sehr vertrauenswürdig bei RTK-Fixed)
+                yaw_noise = 0.005 if rtk == RTKStatus.FIXED else 0.05
+                R_3d = np.zeros((3, 3))
+                R_3d[0:2, 0:2] = self.R_gps[rtk]
+                R_3d[2, 2] = yaw_noise
+                
+                # Update ausführen (dein mathematisches wrap_idx greift hier perfekt bei Index 2)
+                self._ekf_update(z=z, H=H_3d, R=R_3d, wrap_idx=2)
+                
+                self._last_gx = gx
+                self._last_gy = gy
+                return # Beendet den Callback, da Update bereits erledigt
 
-        # ── DEBUG ──────────────────────────────────────────────────────
-        """rospy.loginfo_throttle(1.0,
-            f"[GPS] roh=({gx + self.antenna_height * math.sin(self.pitch):.3f}, "
-            f"{gy - self.antenna_height * math.sin(self.roll):.3f}) | "
-            f"kompensiert=({gx:.3f}, {gy:.3f}) | "
-            f"RTK={'FIXED' if self._rtk_status==2 else 'FLOAT'}"
-        )"""
-        # ───────────────────────────────────────────────────────────────
+        # Reines Positions-Update, falls der Roboter steht oder zu langsam ist
+        self._ekf_update(z=np.array([[gx], [gy]]), H=self.H_gps, R=self.R_gps[rtk])
+        
+        self._last_gx = gx
+        self._last_gy = gy
 
     # ══════════════════════════════════════════════════════════════════
-    # FILTER MATH
+    # FILTER MATH (Bleibt identisch, da voll funktionsfähig)
     # ══════════════════════════════════════════════════════════════════
 
     def _ekf_predict(self, v, w, dt):
         px, py, th, _ = self.x.flatten()
-        # Zustand mathematisch sauber fortschreiben anhand der echten IMU-Drehrate w
         self.x = np.array([
             [px + v * math.cos(th) * dt],
             [py + v * math.sin(th) * dt],
@@ -236,41 +219,8 @@ class EKFNoeticNode:
         self.last_time = now
         if dt <= 0: return
 
-        # 1. EKF-Schritt: Zustand mit real vergangenem dt prädizieren
+        # EKF prädizieren
         self._ekf_predict(v=self.linear_speed, w=self.imu_w, dt=dt)
-        """
-        cmd = Twist()
-        if self.is_moving:
-            current_x   = self.x[0, 0]
-            current_y   = self.x[1, 0]
-            current_yaw = self.x[2, 0]
-
-            # ── STANLEY REGELUNG ──
-            # A: Winkelfehler berechnen (PD-Anteil für Kursstabilität)
-            heading_error = self._wrap(self.target_heading - current_yaw)
-            d_heading_error = (heading_error - self._last_heading_error) / dt
-            self._last_heading_error = heading_error
-
-            # B: Querablagefehler berechnen (Versetzt das Fahrzeug im Matsch parallel?)
-            dx = current_x - self.line_start_x
-            dy = current_y - self.line_start_y
-            cross_track_error = math.sin(self.target_heading) * dx - math.cos(self.target_heading) * dy
-
-            # C: Reglersignale fusionieren
-            steering_out = (self.kp_heading * heading_error) + \
-                           (self.kd_heading * d_heading_error) + \
-                           (self.kp_track * cross_track_error)
-
-            cmd.linear.x = self.linear_speed
-            cmd.angular.z = float(np.clip(steering_out, -1.5, 1.5))
-        else:
-            cmd.linear.x = 0.0
-            cmd.angular.z = 0.0
-            self._last_heading_error = 0.0
-
-        # Steuerbefehl raus an die Motor-Treiber senden
-        self.cmd_pub.publish(cmd)
-        """
 
         cmd = Twist()
         if self.is_moving:
@@ -283,22 +233,24 @@ class EKFNoeticNode:
                 cmd.linear.x = self.linear_speed
                 cmd.angular.z = self.commanded_angular_speed
                 
-                # Wir verschieben den Spur-Startpunkt und Kurs fließend mit der Bewegung,
-                # damit der Stanley-Regler nach der Kurve weich auf der neuen Richtung aufsetzt.
                 self.line_start_x = current_x
                 self.line_start_y = current_y
                 self.target_heading = current_yaw
                 self._last_heading_error = 0.0
                 self._steering_active = True
+                self._spur_anforderung = False
 
             # MODUS B: Es soll nur die Spur gehalten werden (Geradeaus im Matsch)
             else:
-                # Falls wir gerade aus einer Kurve kommen, die Spur jetzt final fixieren
-                if getattr(self, '_steering_active', False):
+                # NEU: Spur erst einrasten, wenn wir uns wirklich bewegen UND der EKF 
+                # durch das GPS-Heading-Update die Chance hatte, sich einzunorden.
+                if getattr(self, '_spur_anforderung', False) or getattr(self, '_steering_active', False):
                     self.line_start_x = current_x
                     self.line_start_y = current_y
                     self.target_heading = current_yaw
                     self._steering_active = False
+                    self._spur_anforderung = False
+                    rospy.loginfo(f"[SPUR] Neu fixiert auf stabilisiertes Heading: {math.degrees(self.target_heading):.1f}°")
 
                 # Klassischer Stanley-Spurregler
                 heading_error = self._wrap(self.target_heading - current_yaw)
@@ -313,17 +265,6 @@ class EKFNoeticNode:
                                (self.kd_heading * d_heading_error) + \
                                (self.kp_track * cross_track_error)
 
-                # ── DEBUG ──────────────────────────────────────────────────────
-                """rospy.loginfo_throttle(0.5,
-                    f"[SPURREGLER] "
-                    f"heading_err={math.degrees(heading_error):+.2f}° | "
-                    f"cross_track={cross_track_error:+.3f}m | "
-                    f"d_heading={math.degrees(d_heading_error):+.2f}°/s | "
-                    f"steering_out={steering_out:+.3f} | "
-                    f"imu_w={self.imu_w:+.4f}rad/s"
-                )"""
-                # ───────────────────────────────────────────────────────────────
-
                 cmd.linear.x = self.linear_speed
                 cmd.angular.z = float(np.clip(steering_out, -1.5, 1.5))
         else:
@@ -331,6 +272,7 @@ class EKFNoeticNode:
             cmd.angular.z = 0.0
             self._last_heading_error = 0.0
             self._steering_active = False
+            self._spur_anforderung = False
 
         self.cmd_pub.publish(cmd)
 
