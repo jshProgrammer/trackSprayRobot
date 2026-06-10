@@ -4,6 +4,14 @@ Navigation Node – GPS-basiert (RTK) + IMU Heading (Auto-Calibrated)
 Position kommt direkt von gps/fix (NavSatFix).
 Heading kommt von imu/data (Gyro-Integration) und wird über die ersten 1.5m
 Fahrtstrecke automatisch zur GPS-Weltkarte ausgerichtet (Kinematic Alignment).
+
+NEU: Virtuelle Leitpunkte ("Lotse")
+Auch ohne Hindernis werden pro Waypoint Zwischenpunkte erzeugt, die den
+Roboter wie ein Lotse zum Ziel führen. Die Punkte liegen auf einer kubischen
+Bézier-Kurve (Start-Tangente = aktuelles Heading, End-Tangente = Richtung
+aufs Ziel), sodass der Roboter beim Erreichen des letzten Leitpunkts bereits
+ideal auf den Waypoint ausgerichtet ist. An Leitpunkten wird NICHT gesprüht;
+für Debugging hält der Roboter dort kurz an (guide_pause_sec).
 """
 
 import json
@@ -79,6 +87,19 @@ class NavigationNode:
         self.waypoint_pause_sec    = rospy.get_param('~waypoint_pause_sec', 5.0)
         self.bypass_pause_sec      = rospy.get_param('~bypass_pause_sec', 5.0)
 
+        # ── Virtuelle Leitpunkte ("Lotse") ────────────────────────────────
+        self.guide_enabled       = rospy.get_param('~guide_enabled', True)
+        # Abstand zwischen zwei Leitpunkten entlang der Kurve
+        self.guide_spacing       = rospy.get_param('~guide_spacing', 2.0)
+        # Leitpunkte müssen (wie Bypass) nicht exakt getroffen werden
+        self.guide_tolerance     = rospy.get_param('~guide_tolerance', 0.7)
+        # Debug: an jedem Leitpunkt kurz stehenbleiben
+        self.guide_pause_sec     = rospy.get_param('~guide_pause_sec', 2.0)
+        # Unterhalb dieser Zieldistanz lohnen sich keine Leitpunkte mehr
+        self.guide_min_goal_dist = rospy.get_param('~guide_min_goal_dist', 3.0)
+        # Der letzte Leitpunkt liegt mind. so weit vorm Ziel -> freie, gerade Endanfahrt
+        self.guide_final_gap     = rospy.get_param('~guide_final_gap', 1.5)
+
     def _init_state(self):
         # ── GPS-State ────────────────────────────────────────────────────
         self.current_lat  = None
@@ -105,6 +126,10 @@ class NavigationNode:
 
         # ── Obstacle Bypass-State ─────────────────────────────────────────
         self.bypass_targets = []    # Liste von (x, y) Umfahrungspunkten (leer = keine Umfahrung)
+
+        # ── Leitpunkt-State (virtuelle Waypoints, kein Spray) ─────────────
+        self.guide_targets        = []    # Liste von (x, y) Leitpunkten
+        self.guide_waypoint_index = None  # für welchen Waypoint die Leitpunkte berechnet wurden
 
         # ── Auto-Kalibrierung (Kinematic Alignment) ──────────────────────
         self.nav_state = "WAITING_FOR_FIX"  # WAITING_FOR_FIX -> CALIBRATING -> NAVIGATING
@@ -230,6 +255,15 @@ class NavigationNode:
                 (float(p[0]), float(p[1]))
                 for p in raw_targets
             ]
+
+            # Echte Hindernis-Umfahrung hat Vorrang vor den virtuellen
+            # Leitpunkten: Leitpunkte verwerfen, sie werden nach der
+            # Umfahrung von der dann aktuellen Position neu erzeugt.
+            if self.bypass_targets and self.guide_targets:
+                rospy.loginfo("Hindernis erkannt -> Leitpunkte verworfen, Umfahrung hat Vorrang")
+                self.guide_targets = []
+                self.guide_waypoint_index = None
+
             rospy.loginfo_throttle(2, f"Bypass-Antwort erhalten: {len(self.bypass_targets)} Punkte")
         except (json.JSONDecodeError, ValueError, TypeError, KeyError) as e:
             rospy.logwarn(f"Ungültige Bypass-Antwort: {e}")
@@ -421,23 +455,48 @@ class NavigationNode:
         goal_lat, goal_lon = self.waypoints[self.current_waypoint_index]
         goal_x, goal_y     = self._gps_to_xy(goal_lat, goal_lon)
 
-        # 4. Anfrage an die Obstacle-Avoidance-Node senden
+        # 4. Virtuelle Leitpunkte für den aktuellen Waypoint erzeugen (einmalig
+        #    pro Waypoint bzw. nach einer Umfahrung von der aktuellen Position aus)
+        if self.guide_enabled and self.guide_waypoint_index != self.current_waypoint_index:
+            self.guide_targets = self._generate_guide_points(
+                nozzle_x, nozzle_y, true_robot_heading, goal_x, goal_y)
+            self.guide_waypoint_index = self.current_waypoint_index
+            if self.guide_targets:
+                pts = ", ".join(f"({px:.2f}, {py:.2f})" for px, py in self.guide_targets)
+                debugOutput = (f"{len(self.guide_targets)} Leitpunkte für Waypoint "
+                               f"{self.current_waypoint_index + 1} erzeugt: {pts}")
+                rospy.loginfo(debugOutput)
+                self.logger.info(debugOutput)
+
+        # 5. Anfrage an die Obstacle-Avoidance-Node senden.
+        #    Geprüft wird das Segment zum NÄCHSTEN tatsächlichen Fahrziel
+        #    (Leitpunkt oder Waypoint), damit auch die gekrümmte Leitkurve
+        #    gegen Hindernisse abgesichert ist.
+        if self.guide_targets:
+            check_x, check_y = self.guide_targets[0]
+        else:
+            check_x, check_y = goal_x, goal_y
         request = {
             'robot_x': nozzle_x,
             'robot_y': nozzle_y,
-            'goal_x': goal_x,
-            'goal_y': goal_y,
+            'goal_x': check_x,
+            'goal_y': check_y,
             'origin_lat': self.origin_lat,
             'origin_lon': self.origin_lon,
             'obstacle_margin': self.obstacle_margin,
         }
         self.bypass_request_pub.publish(String(data=json.dumps(request)))
 
+        # 6. Leitpunkte aktiv? → erst die Leitpunkte der Reihe nach abfahren
+        if self.guide_targets:
+            self._navigate_to_guide(nozzle_x, nozzle_y)
+            return
+
         dx = goal_x - nozzle_x
         dy = goal_y - nozzle_y
         distance = math.sqrt(dx**2 + dy**2)
 
-        # 3. Waypoint erreicht? -> Spray erst nach Bestätigung (Dwell + RTK FIXED),
+        # 7. Waypoint erreicht? -> Spray erst nach Bestätigung (Dwell + RTK FIXED),
         #    damit ein einzelner Rausch-Fix nicht fälschlich auslöst.
         fix_ok = (not self.require_fix_for_spray) or (self.gps_quality == 4)
         if distance < self.waypoint_tolerance and fix_ok:
@@ -477,7 +536,7 @@ class NavigationNode:
             # Toleranz verlassen oder kein FIXED -> Bestätigung zurücksetzen
             self.in_tol_since = None
 
-        # 5. Proportionaler Lenkungsbefehl basierend auf dem Winkel zum Ziel
+        # 8. Proportionaler Lenkungsbefehl basierend auf dem Winkel zum Ziel
         self._steer_towards(nozzle_x, nozzle_y, goal_x, goal_y, label=f"Wegpunkt {self.current_waypoint_index+1}")
 
     def _navigate_to_bypass(self, cur_x: float, cur_y: float):
@@ -500,6 +559,86 @@ class NavigationNode:
 
         label = f"Bypass {'1/2' if len(self.bypass_targets) == 2 else '2/2'}"
         self._steer_towards(cur_x, cur_y, bx, by, label=label)
+
+    # ════════════════════════════════════════════════════════════════════
+    # VIRTUELLE LEITPUNKTE ("Lotse")
+    # ════════════════════════════════════════════════════════════════════
+    def _generate_guide_points(self, start_x: float, start_y: float,
+                               start_heading: float,
+                               goal_x: float, goal_y: float):
+        """Erzeugt Leitpunkte auf einer kubischen Bézier-Kurve vom Roboter zum Ziel.
+
+        Start-Tangente = aktuelles Roboter-Heading
+        End-Tangente   = direkte Richtung aufs Ziel
+        => Der Roboter wird sanft eingedreht und kommt am letzten Leitpunkt
+           bereits ideal ausgerichtet an; die Endanfahrt ist eine kurze Gerade.
+        """
+        dx = goal_x - start_x
+        dy = goal_y - start_y
+        dist = math.hypot(dx, dy)
+
+        # Zu nah am Ziel -> Leitpunkte bringen nichts, direkt anfahren
+        if dist < self.guide_min_goal_dist:
+            return []
+
+        goal_heading = math.atan2(dy, dx)
+
+        # Kontrollpunkte der Bézier-Kurve
+        d = dist / 3.0
+        p0 = (start_x, start_y)
+        p1 = (start_x + d * math.cos(start_heading),
+              start_y + d * math.sin(start_heading))
+        p2 = (goal_x - d * math.cos(goal_heading),
+              goal_y - d * math.sin(goal_heading))
+        p3 = (goal_x, goal_y)
+
+        # Kurve fein abtasten und Punkte im Abstand guide_spacing entnehmen
+        n_samples = max(20, int(dist * 4))
+        guides = []
+        acc = 0.0
+        last = p0
+        for i in range(1, n_samples + 1):
+            t = i / n_samples
+            pt = self._bezier_point(p0, p1, p2, p3, t)
+            acc += math.hypot(pt[0] - last[0], pt[1] - last[1])
+            last = pt
+            if acc >= self.guide_spacing:
+                acc = 0.0
+                # Leitpunkte zu nah am Ziel weglassen -> die letzte Anfahrt
+                # bleibt frei und gerade (dort gilt wieder waypoint_tolerance)
+                if math.hypot(goal_x - pt[0], goal_y - pt[1]) > self.guide_final_gap:
+                    guides.append(pt)
+        return guides
+
+    @staticmethod
+    def _bezier_point(p0, p1, p2, p3, t: float):
+        """Punkt auf einer kubischen Bézier-Kurve bei Parameter t in [0, 1]."""
+        u = 1.0 - t
+        x = (u**3) * p0[0] + 3 * (u**2) * t * p1[0] + 3 * u * (t**2) * p2[0] + (t**3) * p3[0]
+        y = (u**3) * p0[1] + 3 * (u**2) * t * p1[1] + 3 * u * (t**2) * p2[1] + (t**3) * p3[1]
+        return (x, y)
+
+    def _navigate_to_guide(self, cur_x: float, cur_y: float):
+        """Fährt die Leitpunkte der Reihe nach ab; KEIN Spray, nur Debug-Pause."""
+        gx, gy = self.guide_targets[0]
+        dist = math.hypot(gx - cur_x, gy - cur_y)
+
+        if dist < self.guide_tolerance:
+            self.guide_targets.pop(0)
+            debugOutput = (f"Leitpunkt erreicht (Distanz {dist:.2f}m), "
+                           f"noch {len(self.guide_targets)} Leitpunkte bis "
+                           f"Waypoint {self.current_waypoint_index + 1}")
+            rospy.loginfo(debugOutput)
+            self.logger.info(debugOutput)
+            # Debug: kurz stehenbleiben, um das Verhalten beobachten zu können
+            self._publish(0.0, 0.0)
+            if self.guide_pause_sec > 0.0:
+                self.pause_until = rospy.Time.now() + rospy.Duration(self.guide_pause_sec)
+            return
+
+        remaining = len(self.guide_targets)
+        self._steer_towards(cur_x, cur_y, gx, gy,
+                            label=f"Leitpunkt ({remaining} übrig, WP {self.current_waypoint_index + 1})")
 
     # ════════════════════════════════════════════════════════════════════
     # HINDERNISERKENNUNG & UMFAHRUNG
