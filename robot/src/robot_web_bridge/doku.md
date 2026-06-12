@@ -20,7 +20,7 @@
 | `latitude` | `float` | Grad |
 | `longitude` | `float` | Grad |
 | `altitude` | `float` | m |
-| `status.status` | `int` | `4`=RTK Fix · `5`=RTK Float · `1–3`=GPS · `0`=kein Fix |
+| `status.status` | `int` | ROS-`NavSatStatus` (`STATUS_NO_FIX=-1` · `STATUS_FIX=0` · `STATUS_SBAS_FIX=1` · `STATUS_GBAS_FIX=2`). Hier publiziert: `0`=Fix (RTK Fix/DGPS/GPS) · `1`=RTK Float. Fürs Frontend vermutlich nicht relevant – die RTK-Qualität ist hier nicht eindeutig ablesbar (RTK Fix, DGPS und GPS sind alle `0`); stattdessen `gps/quality` verwenden. |
 
 ---
 
