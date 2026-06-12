@@ -6,29 +6,10 @@
 
 ## Topics
 
-### `/goal_coordinates`
-**Typ:** `geometry_msgs/PoseStamped` · **Richtung:** Client → Robot
-
-| Feld | Typ | Einheit |
-|---|---|---|
-| `header.frame_id` | `string` | `map` \| `odom` \| `base_link` \| `world` |
-| `header.stamp.secs` | `int` | Unix-Sekunden |
-| `pose.position.x` | `float` | m |
-| `pose.position.y` | `float` | m |
-| `pose.position.z` | `float` | m |
-| `pose.orientation.z` | `float` | — |
-| `pose.orientation.w` | `float` | — |
-
----
-
-### `/test_data`
-**Typ:** `std_msgs/String` · **Richtung:** Robot → Client
-
-| Feld | Typ |
-|---|---|
-| `data` | `string` |
-
----
+> **Hinweis:** Waypoints und Hindernisse werden **nicht** über rosbridge gesendet,
+> sondern als JSON-Files direkt auf den Pi geschrieben
+> (`/home/ubuntu/trackSprayRobot/shared_files/waypoints.json` + `obstacles.json`, siehe
+> `deploy/README.md`). Diese Doku beschreibt nur die rosbridge-Live-Datenflüsse.
 
 ### `gps/fix`
 **Typ:** `sensor_msgs/NavSatFix` · **Richtung:** Robot → Client
@@ -40,6 +21,17 @@
 | `longitude` | `float` | Grad |
 | `altitude` | `float` | m |
 | `status.status` | `int` | `4`=RTK Fix · `5`=RTK Float · `1–3`=GPS · `0`=kein Fix |
+
+---
+
+### `gps/quality`
+**Typ:** `std_msgs/UInt8` · **Richtung:** Robot → Client
+
+Roher GGA-Qualitätsindikator des GPS-Empfängers (ergänzend zu `gps/fix.status.status`).
+
+| Feld | Typ | Bedeutung |
+|---|---|---|
+| `data` | `uint8` | `4`=RTK Fix (cm) · `5`=RTK Float · `2`=DGPS · `1`=GPS · `0`=kein Fix |
 
 ---
 
