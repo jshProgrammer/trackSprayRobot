@@ -1,0 +1,9 @@
+<launch>
+    <!-- Phase 2: Fahren + Navigation OHNE Localization (läuft bereits aus Phase 1).
+         Wird manuell vom Frontend via start_navigation.sh gestartet (nach Ausrichtung).
+         teleop enthält emergency_kill.py -> Not-Aus ist ab hier aktiv. -->
+    <include file="$(find teleop)/launch/teleop.launch"/>
+    <include file="$(find motor_control)/launch/motor.launch"/>
+    <include file="$(find imu)/launch/imu.launch"/>
+    <include file="$(find navigation)/launch/navigation.launch"/>
+</launch>

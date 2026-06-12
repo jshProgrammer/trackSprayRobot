@@ -65,7 +65,11 @@ class NavigationNode:
         self.waypoint_tolerance   = rospy.get_param('~waypoint_tolerance', 0.3)
         # Bypass-Punkte müssen nicht exakt getroffen werden (kein Spray) -> größere Toleranz
         self.bypass_tolerance     = rospy.get_param('~bypass_tolerance', 0.7)
-        self.waypoints            = rospy.get_param('~waypoints', [])
+        # Waypoints kommen primär aus einem JSON-File (vom Frontend auf den Pi geschrieben);
+        # Fallback ist der rosparam ~waypoints (navigation.yaml), falls die Datei fehlt.
+        self.waypoints_file       = rospy.get_param('~waypoints_file',
+                                                    '/home/ubuntu/trackSprayRobot/shared_files/waypoints.json')
+        self.waypoints            = self._load_waypoints()
         self.gps_to_nozzle_offset = rospy.get_param('~gps_to_nozzle_offset', 0.58)
         self.min_gps_status       = rospy.get_param('~min_gps_status', 0)
         self.obstacle_margin      = rospy.get_param('~obstacle_margin', 1.0)
@@ -78,6 +82,38 @@ class NavigationNode:
         self.require_fix_for_spray = rospy.get_param('~require_fix_for_spray', True)
         self.waypoint_pause_sec    = rospy.get_param('~waypoint_pause_sec', 5.0)
         self.bypass_pause_sec      = rospy.get_param('~bypass_pause_sec', 5.0)
+
+    def _load_waypoints(self):
+        """Lädt Waypoints aus dem JSON-File; fällt auf rosparam ~waypoints zurück.
+
+        Akzeptiert sowohl eine reine Liste [[lat, lon], ...] als auch die Objektform
+        {"waypoints": [[lat, lon], ...]}. Bei Fehlern wird der rosparam-Fallback genutzt,
+        damit ein fehlendes/kaputtes File die Navigation nicht crasht.
+        """
+        fallback = rospy.get_param('~waypoints', [])
+
+        if not os.path.exists(self.waypoints_file):
+            rospy.loginfo(f"Kein Waypoints-File ({self.waypoints_file}) -> rosparam-Fallback "
+                          f"({len(fallback)} Punkte)")
+            return fallback
+
+        try:
+            with open(self.waypoints_file, "r") as f:
+                data = json.load(f)
+            if isinstance(data, dict) and 'waypoints' in data:
+                raw = data['waypoints']
+            elif isinstance(data, list):
+                raw = data
+            else:
+                raise ValueError("Ungültiges Waypoints-Format (erwarte Liste oder {'waypoints': [...]})")
+
+            waypoints = [[float(p[0]), float(p[1])] for p in raw]
+            rospy.loginfo(f"Waypoints aus {self.waypoints_file} geladen: {len(waypoints)} Punkte")
+            return waypoints
+        except (json.JSONDecodeError, ValueError, TypeError, KeyError, IndexError, OSError) as e:
+            rospy.logwarn(f"Waypoints-File ungültig ({e}) -> rosparam-Fallback "
+                          f"({len(fallback)} Punkte)")
+            return fallback
 
     def _init_state(self):
         # ── GPS-State ────────────────────────────────────────────────────
