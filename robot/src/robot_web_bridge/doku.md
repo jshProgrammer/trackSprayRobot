@@ -36,6 +36,33 @@ Roher GGA-Qualitätsindikator des GPS-Empfängers (ergänzend zu `gps/fix.status
 ---
 
 
+### `/robot_state`
+**Typ:** `robot_msgs/RobotState` · **Richtung:** Robot → Client
+
+**Aktueller Navigations-Lebenszustand** (nicht zu verwechseln mit `/robot_status`, das
+diskrete Events/Fehler liefert). Publiziert bei **Zustandswechsel** und bei
+**Wegpunktwechsel**, **latched** (ein spät verbundener Client bekommt sofort den
+aktuellen Zustand).
+
+| Feld | Typ | Bedeutung |
+|---|---|---|
+| `stamp` | `time` | Zeitpunkt des Zustands |
+| `state` | `uint8` | `0`=IDLE · `1`=CALIBRATING · `2`=NAVIGATING · `3`=GOAL_REACHED |
+| `state_name` | `string` | Klartext-Label (`IDLE` \| `CALIBRATING` \| `NAVIGATING` \| `GOAL_REACHED`) |
+| `waypoint_index` | `uint16` | aktueller Ziel-Wegpunkt, **1-basiert** (N von total); `0` wenn n/a |
+| `waypoint_total` | `uint16` | Anzahl Ziel-Wegpunkte |
+| `target_lat` | `float64` | Zielkoordinate – **nur** im Zustand `NAVIGATING` gesetzt, sonst `0.0` |
+| `target_lon` | `float64` | s.o. |
+
+**Zustände:** `IDLE` = wartet auf stabilen RTK-FIXED · `CALIBRATING` = fährt 3 m
+geradeaus zur Heading-Kalibrierung · `NAVIGATING` = fährt zum Ziel-Wegpunkt
+(`waypoint_index`/`target_*`) · `GOAL_REACHED` = alle Wegpunkte abgefahren.
+
+> `target_lat/lon` sind nur die **echten** Ziel-Wegpunkte – Hindernis-Umfahrungspunkte
+> erscheinen hier nicht (Zustand bleibt `NAVIGATING` mit dem eigentlichen Ziel).
+
+---
+
 ### `/robot_status`
 **Typ:** `robot_msgs/RobotStatus` · **Richtung:** Robot → Client
 

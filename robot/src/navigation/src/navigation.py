@@ -17,7 +17,8 @@ import datetime
 import logging
 from std_msgs.msg import UInt8, Empty
 from spray_counter import spray
-from robot_msgs.status import StatusReporter
+from robot_msgs.status import StatusReporter, StatePublisher
+from robot_msgs.msg import RobotState
 
 # ═══════════════════════════════════════════════════════════════════════
 # KONSTANTEN
@@ -157,6 +158,9 @@ class NavigationNode:
 
     def _init_ros(self):
         self.status = StatusReporter(source="navigation")
+        self.state_pub = StatePublisher()
+        # Startzustand sofort (latched) -> früh verbundenes Frontend sieht "IDLE".
+        self.state_pub.publish(RobotState.STATE_IDLE, waypoint_total=len(self.waypoints))
         self.cmd_vel_pub = rospy.Publisher('/cmd_vel_controll', Twist, queue_size=1)
         self.spray_pub = rospy.Publisher("/cmd_spray", Empty, queue_size=1)
         self.bypass_request_pub = rospy.Publisher('/obstacle_bypass_request', String, queue_size=1)
@@ -367,6 +371,8 @@ class NavigationNode:
                 rospy.loginfo("Alle Waypoints erreicht! Roboter stoppt.")
                 self.at_goal = True
                 self.status.info("GOAL_REACHED", "Alle Waypoints erreicht – Roboter stoppt")
+                self.state_pub.publish(RobotState.STATE_GOAL_REACHED,
+                                       waypoint_total=len(self.waypoints))
             self._publish(0.0, 0.0)
             return False
 
@@ -387,6 +393,7 @@ class NavigationNode:
         self.calib_start_time = rospy.Time.now()
 
         self.nav_state = "CALIBRATING"
+        self.state_pub.publish(RobotState.STATE_CALIBRATING, waypoint_total=len(self.waypoints))
         rospy.loginfo("Starte Auto-Kalibrierung: Fahre 1.5m geradeaus, um den GPS-Vektor zu messen...")
 
     def _handle_calibrating(self, cur_x: float, cur_y: float):
@@ -448,12 +455,26 @@ class NavigationNode:
             f"Offset={math.degrees(self.heading_offset):.1f}°"
         )
         self.nav_state = "NAVIGATING"
+        self._publish_navigating_state()
         rospy.loginfo("="*50)
         rospy.loginfo(f"KALIBRIERUNG ERFOLGREICH!")
         rospy.loginfo(f"GPS Welt-Winkel: {math.degrees(true_gps_heading):.1f}°")
         rospy.loginfo(f"Roher IMU-Winkel: {math.degrees(self.heading):.1f}°")
         rospy.loginfo(f"Berechneter Offset: {math.degrees(self.heading_offset):.1f}°")
         rospy.loginfo("="*50)
+
+    def _publish_navigating_state(self):
+        """Published STATE_NAVIGATING mit dem aktuellen Ziel-Wegpunkt (1-basiert + lat/lon)."""
+        if self.current_waypoint_index >= len(self.waypoints):
+            return
+        goal_lat, goal_lon = self.waypoints[self.current_waypoint_index]
+        self.state_pub.publish(
+            RobotState.STATE_NAVIGATING,
+            waypoint_index=self.current_waypoint_index + 1,
+            waypoint_total=len(self.waypoints),
+            target_lat=float(goal_lat),
+            target_lon=float(goal_lon),
+        )
 
     # ════════════════════════════════════════════════════════════════════
     # PHASE 2: NORMALE NAVIGATION ZUM ZIEL
@@ -510,6 +531,9 @@ class NavigationNode:
             self.current_waypoint_index += 1
             self.in_tol_since = None
             self.pause_until = rospy.Time.now() + rospy.Duration(self.waypoint_pause_sec)
+            # Wegpunktwechsel -> neuer Ziel-Wegpunkt im State (GOAL_REACHED kommt ggf.
+            # im nächsten _preconditions_met-Durchlauf, wenn keine Wegpunkte mehr da sind).
+            self._publish_navigating_state()
             """
             if self.in_tol_since is None:
                 self.in_tol_since = now

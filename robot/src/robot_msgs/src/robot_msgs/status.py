@@ -12,7 +12,7 @@ abonniert nur dieses eine Topic und filtert über ``source`` / ``type`` / ``code
 """
 
 import rospy
-from robot_msgs.msg import RobotStatus
+from robot_msgs.msg import RobotStatus, RobotState
 
 # Flush-Zeit, damit ein latched publish einer gleich sterbenden Node noch rausgeht.
 _FATAL_FLUSH_SEC = 0.3
@@ -53,3 +53,40 @@ class StatusReporter:
             rospy.sleep(_FATAL_FLUSH_SEC)
         except rospy.ROSInterruptException:
             pass
+
+
+class StatePublisher:
+    """Publiziert den aktuellen Navigations-Lebenszustand auf ``/robot_state`` (latched).
+
+    Im Gegensatz zum ereignisbasierten StatusReporter beschreibt dies den
+    *kontinuierlichen* Zustand. Dedup über (state, waypoint_index): ein neuer Zustand
+    ODER ein neuer Ziel-Wegpunkt löst eine Publikation aus, ein 100-Hz-Wiederholen
+    desselben Punkts nicht.
+    """
+
+    _NAMES = {
+        RobotState.STATE_IDLE: "IDLE",
+        RobotState.STATE_CALIBRATING: "CALIBRATING",
+        RobotState.STATE_NAVIGATING: "NAVIGATING",
+        RobotState.STATE_GOAL_REACHED: "GOAL_REACHED",
+    }
+
+    def __init__(self, topic="/robot_state"):
+        self.pub = rospy.Publisher(topic, RobotState, queue_size=10, latch=True)
+        self._last_key = None
+
+    def publish(self, state, waypoint_index=0, waypoint_total=0,
+                target_lat=0.0, target_lon=0.0):
+        key = (state, waypoint_index)
+        if key == self._last_key:
+            return
+        self._last_key = key
+        self.pub.publish(RobotState(
+            stamp=rospy.Time.now(),
+            state=state,
+            state_name=self._NAMES.get(state, ""),
+            waypoint_index=waypoint_index,
+            waypoint_total=waypoint_total,
+            target_lat=target_lat,
+            target_lon=target_lon,
+        ))
