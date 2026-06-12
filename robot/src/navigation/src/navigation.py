@@ -17,6 +17,7 @@ import datetime
 import logging
 from std_msgs.msg import UInt8, Empty
 from spray_counter import spray
+from robot_msgs.status import StatusReporter
 
 # ═══════════════════════════════════════════════════════════════════════
 # KONSTANTEN
@@ -149,7 +150,13 @@ class NavigationNode:
         self.calib_start_y = None
         self.calib_start_time = None
 
+        # ── Status-Reporting (Frontend) ──────────────────────────────────
+        # Eigene Flanke für RTK_LOST<->RTK_RECOVERED, da der globale dedup im
+        # StatusReporter durch andere Events (z.B. GOAL_REACHED) zurückgesetzt würde.
+        self.rtk_lost = False
+
     def _init_ros(self):
+        self.status = StatusReporter(source="navigation")
         self.cmd_vel_pub = rospy.Publisher('/cmd_vel_controll', Twist, queue_size=1)
         self.spray_pub = rospy.Publisher("/cmd_spray", Empty, queue_size=1)
         self.bypass_request_pub = rospy.Publisher('/obstacle_bypass_request', String, queue_size=1)
@@ -191,10 +198,12 @@ class NavigationNode:
                 debugOutput = f"RTK stabil ({streak:.1f}s FIXED am Stück) -> Navigation freigegeben"
                 rospy.loginfo(debugOutput)
                 self.logger.info(debugOutput)
+                self.status.info("RTK_READY", "RTK stabil – Navigation freigegeben")
         else:
             # Jeder Nicht-FIXED (FLOAT/DGPS/GPS/NO_FIX) unterbricht den Streak.
             if self.fix_streak_start is not None and not self.rtk_ready:
                 rospy.logwarn_throttle(5, "RTK-FIXED unterbrochen vor Freigabe – Streak zurückgesetzt")
+                self.status.warn("RTK_UNSTABLE", "RTK-FIXED unterbrochen vor Freigabe")
             self.fix_streak_start = None
 
         # ── Position NUR aus RTK FIXED übernehmen ─────────────────────────
@@ -226,6 +235,11 @@ class NavigationNode:
         self.current_lat   = new_lat
         self.current_lon   = new_lon
         self.last_fix_time = rospy.Time.now()
+
+        # Gegenflanke zu RTK_LOST: frischer FIXED nach einem Verlust -> RECOVERED.
+        if self.rtk_lost:
+            self.rtk_lost = False
+            self.status.info("RTK_RECOVERED", "RTK-Fix wieder da – Fahrt geht weiter", dedup=False)
 
         rospy.loginfo_throttle(5, f"GPS FIXED: lat={self.current_lat:.7f}, lon={self.current_lon:.7f}")
 
@@ -341,6 +355,10 @@ class NavigationNode:
         if self.last_fix_time is None or \
            (rospy.Time.now() - self.last_fix_time).to_sec() > self.gps_timeout:
             rospy.logwarn_throttle(2, f"Kein frischer RTK-FIXED seit >{self.gps_timeout:.1f}s -> Stop")
+            # Edge: nur beim ersten Eintritt melden; RTK_RECOVERED kommt aus _gps_callback.
+            if not self.rtk_lost:
+                self.rtk_lost = True
+                self.status.error("RTK_LOST", "Kein frischer RTK-FIXED – Roboter stoppt", dedup=False)
             self._publish(0.0, 0.0)
             return False
 
@@ -348,6 +366,7 @@ class NavigationNode:
             if not self.at_goal:
                 rospy.loginfo("Alle Waypoints erreicht! Roboter stoppt.")
                 self.at_goal = True
+                self.status.info("GOAL_REACHED", "Alle Waypoints erreicht – Roboter stoppt")
             self._publish(0.0, 0.0)
             return False
 

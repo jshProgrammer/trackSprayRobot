@@ -7,11 +7,13 @@ from std_msgs.msg import UInt8MultiArray, String, UInt8
 import datetime
 import os
 import logging
+from robot_msgs.status import StatusReporter
 
 class LC29HDriver:
     def __init__(self):
         rospy.init_node('lc29h_driver', anonymous=True)
- 
+
+        self.status = StatusReporter(source="gps_node")
         self.init_logging()
         self._init_params()
         self._init_serial()
@@ -38,6 +40,8 @@ class LC29HDriver:
             debugOutput = f"Serial error: {e}"
             self.logger.error(debugOutput)
             rospy.logerr(debugOutput)
+            self.status.report_fatal("GPS_SERIAL_FAILED",
+                                     "GPS-Sensor nicht erreichbar (serielle Verbindung)")
             raise
 
     def _nmea_checksum(self, sentence: str) -> str:
@@ -216,7 +220,9 @@ class LC29HDriver:
                 debugOutput = f"Serial read error: {e}"
                 self.logger.error(debugOutput)
                 rospy.logerr_throttle(5, debugOutput)
- 
+                # edge-triggered: nur beim ersten Lesefehler melden (dedup im Reporter)
+                self.status.warn("GPS_SERIAL_READ_ERROR", "Lesefehler auf serieller GPS-Leitung")
+
     def shutdown(self):
         if self.ser and self.ser.is_open:
             self.ser.close()

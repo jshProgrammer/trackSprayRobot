@@ -4,10 +4,15 @@ from geometry_msgs.msg import Twist
 from std_msgs.msg import Empty
 import time
 import pigpio
+from robot_msgs.status import StatusReporter
 
 class MotorDriver:
 
     def __init__(self):
+
+        # Status-Reporter zuerst, damit auch frühe Fehler ans Frontend gehen.
+        # (rospy.init_node läuft bereits im __main__ vor MotorDriver().)
+        self.status = StatusReporter(source="pwm_drive")
 
         # =========================
         # PARAMETER LOAD
@@ -32,6 +37,8 @@ class MotorDriver:
         # =========================
         self.pi = pigpio.pi()
         if not self.pi.connected:
+            self.status.report_fatal("MOTOR_PIGPIOD_DOWN",
+                                     "pigpio-Daemon läuft nicht – Roboter kann nicht fahren")
             raise RuntimeError("pigpio daemon not running -> sudo pigpiod")
         
         self.pi.hardware_PWM(self.pin_right, self.motor_frequency, 0)
