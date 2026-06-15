@@ -93,6 +93,19 @@ class NavigationNode:
         self.waypoint_pause_sec    = rospy.get_param('~waypoint_pause_sec', 5.0)
         self.bypass_pause_sec      = rospy.get_param('~bypass_pause_sec', 5.0)
 
+        # ── Virtuelle Leitpunkte ("Lotse") ────────────────────────────────
+        self.guide_enabled       = rospy.get_param('~guide_enabled', True)
+        # Abstand zwischen zwei Leitpunkten entlang der Kurve
+        self.guide_spacing       = rospy.get_param('~guide_spacing', 2.0)
+        # Leitpunkte müssen (wie Bypass) nicht exakt getroffen werden
+        self.guide_tolerance     = rospy.get_param('~guide_tolerance', 0.7)
+        # Debug: an jedem Leitpunkt kurz stehenbleiben
+        self.guide_pause_sec     = rospy.get_param('~guide_pause_sec', 2.0)
+        # Unterhalb dieser Zieldistanz lohnen sich keine Leitpunkte mehr
+        self.guide_min_goal_dist = rospy.get_param('~guide_min_goal_dist', 3.0)
+        # Der letzte Leitpunkt liegt mind. so weit vorm Ziel -> freie, gerade Endanfahrt
+        self.guide_final_gap     = rospy.get_param('~guide_final_gap', 1.5)
+
     def _load_waypoints(self):
         """Lädt Waypoints aus dem JSON-File; fällt auf rosparam ~waypoints zurück.
 
@@ -138,19 +151,6 @@ class NavigationNode:
             rospy.logwarn(f"Waypoints-File ungültig ({e}) -> rosparam-Fallback "
                           f"({len(fallback)} Punkte)")
             return fallback
-
-        # ── Virtuelle Leitpunkte ("Lotse") ────────────────────────────────
-        self.guide_enabled       = rospy.get_param('~guide_enabled', True)
-        # Abstand zwischen zwei Leitpunkten entlang der Kurve
-        self.guide_spacing       = rospy.get_param('~guide_spacing', 2.0)
-        # Leitpunkte müssen (wie Bypass) nicht exakt getroffen werden
-        self.guide_tolerance     = rospy.get_param('~guide_tolerance', 0.7)
-        # Debug: an jedem Leitpunkt kurz stehenbleiben
-        self.guide_pause_sec     = rospy.get_param('~guide_pause_sec', 2.0)
-        # Unterhalb dieser Zieldistanz lohnen sich keine Leitpunkte mehr
-        self.guide_min_goal_dist = rospy.get_param('~guide_min_goal_dist', 3.0)
-        # Der letzte Leitpunkt liegt mind. so weit vorm Ziel -> freie, gerade Endanfahrt
-        self.guide_final_gap     = rospy.get_param('~guide_final_gap', 1.5)
 
     def _init_state(self):
         # ── GPS-State ────────────────────────────────────────────────────
