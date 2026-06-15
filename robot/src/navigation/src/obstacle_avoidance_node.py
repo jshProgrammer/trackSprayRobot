@@ -48,16 +48,23 @@ class ObstacleAvoidanceNode:
         rospy.Subscriber('/obstacle_bypass_request', String, self._request_callback)
 
     def _parse_obstacles(self, data):
-        """Wandelt eine Liste von Hindernis-Dicts in normalisierte ObstacleBox-Tupel um."""
-        return [
-            ObstacleBox(
-                lat_min=min(o['lat_min'], o['lat_max']),
-                lon_min=min(o['lon_min'], o['lon_max']),
-                lat_max=max(o['lat_min'], o['lat_max']),
-                lon_max=max(o['lon_min'], o['lon_max']),
-            )
-            for o in data
-        ]
+        """Wandelt eine Liste von Hindernis-Dicts in normalisierte ObstacleBox-Tupel um.
+
+        Einzelne fehlerhafte Einträge werden übersprungen (mit Warnung), statt das
+        gesamte File/die Map zu verwerfen.
+        """
+        boxes = []
+        for i, o in enumerate(data):
+            try:
+                boxes.append(ObstacleBox(
+                    lat_min=min(o['lat_min'], o['lat_max']),
+                    lon_min=min(o['lon_min'], o['lon_max']),
+                    lat_max=max(o['lat_min'], o['lat_max']),
+                    lon_max=max(o['lon_min'], o['lon_max']),
+                ))
+            except (KeyError, TypeError) as e:
+                rospy.logwarn(f"Hindernis-Eintrag {i} übersprungen (ungültig: {e})")
+        return boxes
 
     def _load_obstacles_file(self):
         #TODO: default list only for testing! to be removed in future version

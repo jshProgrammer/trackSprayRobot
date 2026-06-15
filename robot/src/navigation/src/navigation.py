@@ -109,7 +109,21 @@ class NavigationNode:
             else:
                 raise ValueError("Ungültiges Waypoints-Format (erwarte Liste oder {'waypoints': [...]})")
 
-            waypoints = [[float(p[0]), float(p[1])] for p in raw]
+            def _coerce(p):
+                # Dict-Format ({"lat": ..., "lon": ...}, z.B. aus shared_files/waypoints.json)
+                # ebenso wie das alte Listen-Format ([lat, lon]) unterstützen.
+                if isinstance(p, dict):
+                    return [float(p["lat"]), float(p["lon"])]
+                return [float(p[0]), float(p[1])]
+
+            # Einzelne fehlerhafte Wegpunkte überspringen (mit Warnung), statt das
+            # gesamte File zu verwerfen und auf den rosparam-Fallback zu kippen.
+            waypoints = []
+            for i, p in enumerate(raw):
+                try:
+                    waypoints.append(_coerce(p))
+                except (KeyError, TypeError, ValueError, IndexError) as e:
+                    rospy.logwarn(f"Wegpunkt {i} übersprungen (ungültig: {e})")
             rospy.loginfo(f"Waypoints aus {self.waypoints_file} geladen: {len(waypoints)} Punkte")
             return waypoints
         except (json.JSONDecodeError, ValueError, TypeError, KeyError, IndexError, OSError) as e:
