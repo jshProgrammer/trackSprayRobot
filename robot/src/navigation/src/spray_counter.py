@@ -1,6 +1,8 @@
 import os
 
-DATEI = "/home/ubuntu/dosenstand.txt"
+# Pfad zur Dosenstand-Datei. Default unverändert (/home/ubuntu/dosenstand.txt), damit der
+# Frontend-Vertrag stabil bleibt; per Umgebungsvariable DOSENSTAND_FILE überschreibbar.
+DATEI = os.environ.get("DOSENSTAND_FILE", "/home/ubuntu/dosenstand.txt")
 GRAMM_PRO_STOSS = 0.25
 STARTGEWICHT = 250.0
 

@@ -207,4 +207,5 @@ find_package(catkin REQUIRED COMPONENTS
   roscpp
   rospy
   motor_control   # <-- hinzufügen
+  robot_msgs      # <-- Status-Messages + StatusReporter
 )

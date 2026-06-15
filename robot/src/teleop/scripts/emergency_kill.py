@@ -22,9 +22,15 @@ class EmergencyHandler:
 
     def hard_stop(self):
         rospy.logfatal("❌ HARD EMERGENCY STOP - KILLING EVERYTHING!")
-        
-        os.system("pkill -f 'pwm_drive.py|joy_node|teleop_node|joystick.py|ntrip_client|gps_node.py' &")
-        
+
+        # Killt alle Fahr-/Navigationsprozesse. localization (gps_node/ntrip_client),
+        # roscore und rosbridge bleiben bewusst am Leben, damit das Frontend verbunden
+        # bleibt und nach einem Not-Aus wieder Phase 2 starten kann.
+        os.system(
+            "pkill -f 'pwm_drive.py|kalman_filter_2.5D_optimized.py|navigation.py|"
+            "obstacle_avoidance_node.py|joy_node|teleop_node|joystick.py' &"
+        )
+
         rospy.signal_shutdown("Hard emergency stop")
 
     def soft_reset(self):
