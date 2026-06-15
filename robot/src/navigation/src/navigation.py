@@ -17,6 +17,8 @@ import datetime
 import logging
 from std_msgs.msg import UInt8, Empty
 from spray_counter import spray
+from robot_msgs.status import StatusReporter, StatePublisher
+from robot_msgs.msg import RobotState
 
 # ═══════════════════════════════════════════════════════════════════════
 # KONSTANTEN
@@ -65,7 +67,11 @@ class NavigationNode:
         self.waypoint_tolerance   = rospy.get_param('~waypoint_tolerance', 0.3)
         # Bypass-Punkte müssen nicht exakt getroffen werden (kein Spray) -> größere Toleranz
         self.bypass_tolerance     = rospy.get_param('~bypass_tolerance', 0.7)
-        self.waypoints            = rospy.get_param('~waypoints', [])
+        # Waypoints kommen primär aus einem JSON-File (vom Frontend auf den Pi geschrieben);
+        # Fallback ist der rosparam ~waypoints (navigation.yaml), falls die Datei fehlt.
+        self.waypoints_file       = rospy.get_param('~waypoints_file',
+                                                    '/home/ubuntu/trackSprayRobot/shared_files/waypoints.json')
+        self.waypoints            = self._load_waypoints()
         self.gps_to_nozzle_offset = rospy.get_param('~gps_to_nozzle_offset', 0.58)
         self.min_gps_status       = rospy.get_param('~min_gps_status', 0)
         self.obstacle_margin      = rospy.get_param('~obstacle_margin', 1.0)
@@ -78,6 +84,52 @@ class NavigationNode:
         self.require_fix_for_spray = rospy.get_param('~require_fix_for_spray', True)
         self.waypoint_pause_sec    = rospy.get_param('~waypoint_pause_sec', 5.0)
         self.bypass_pause_sec      = rospy.get_param('~bypass_pause_sec', 5.0)
+
+    def _load_waypoints(self):
+        """Lädt Waypoints aus dem JSON-File; fällt auf rosparam ~waypoints zurück.
+
+        Akzeptiert sowohl eine reine Liste [[lat, lon], ...] als auch die Objektform
+        {"waypoints": [[lat, lon], ...]}. Bei Fehlern wird der rosparam-Fallback genutzt,
+        damit ein fehlendes/kaputtes File die Navigation nicht crasht.
+        """
+        fallback = rospy.get_param('~waypoints', [])
+
+        if not os.path.exists(self.waypoints_file):
+            rospy.loginfo(f"Kein Waypoints-File ({self.waypoints_file}) -> rosparam-Fallback "
+                          f"({len(fallback)} Punkte)")
+            return fallback
+
+        try:
+            with open(self.waypoints_file, "r") as f:
+                data = json.load(f)
+            if isinstance(data, dict) and 'waypoints' in data:
+                raw = data['waypoints']
+            elif isinstance(data, list):
+                raw = data
+            else:
+                raise ValueError("Ungültiges Waypoints-Format (erwarte Liste oder {'waypoints': [...]})")
+
+            def _coerce(p):
+                # Dict-Format ({"lat": ..., "lon": ...}, z.B. aus shared_files/waypoints.json)
+                # ebenso wie das alte Listen-Format ([lat, lon]) unterstützen.
+                if isinstance(p, dict):
+                    return [float(p["lat"]), float(p["lon"])]
+                return [float(p[0]), float(p[1])]
+
+            # Einzelne fehlerhafte Wegpunkte überspringen (mit Warnung), statt das
+            # gesamte File zu verwerfen und auf den rosparam-Fallback zu kippen.
+            waypoints = []
+            for i, p in enumerate(raw):
+                try:
+                    waypoints.append(_coerce(p))
+                except (KeyError, TypeError, ValueError, IndexError) as e:
+                    rospy.logwarn(f"Wegpunkt {i} übersprungen (ungültig: {e})")
+            rospy.loginfo(f"Waypoints aus {self.waypoints_file} geladen: {len(waypoints)} Punkte")
+            return waypoints
+        except (json.JSONDecodeError, ValueError, TypeError, KeyError, IndexError, OSError) as e:
+            rospy.logwarn(f"Waypoints-File ungültig ({e}) -> rosparam-Fallback "
+                          f"({len(fallback)} Punkte)")
+            return fallback
 
     def _init_state(self):
         # ── GPS-State ────────────────────────────────────────────────────
@@ -113,7 +165,16 @@ class NavigationNode:
         self.calib_start_y = None
         self.calib_start_time = None
 
+        # ── Status-Reporting (Frontend) ──────────────────────────────────
+        # Eigene Flanke für RTK_LOST<->RTK_RECOVERED, da der globale dedup im
+        # StatusReporter durch andere Events (z.B. GOAL_REACHED) zurückgesetzt würde.
+        self.rtk_lost = False
+
     def _init_ros(self):
+        self.status = StatusReporter(source="navigation")
+        self.state_pub = StatePublisher()
+        # Startzustand sofort (latched) -> früh verbundenes Frontend sieht "IDLE".
+        self.state_pub.publish(RobotState.STATE_IDLE, waypoint_total=len(self.waypoints))
         self.cmd_vel_pub = rospy.Publisher('/cmd_vel_controll', Twist, queue_size=1)
         self.spray_pub = rospy.Publisher("/cmd_spray", Empty, queue_size=1)
         self.bypass_request_pub = rospy.Publisher('/obstacle_bypass_request', String, queue_size=1)
@@ -155,10 +216,12 @@ class NavigationNode:
                 debugOutput = f"RTK stabil ({streak:.1f}s FIXED am Stück) -> Navigation freigegeben"
                 rospy.loginfo(debugOutput)
                 self.logger.info(debugOutput)
+                self.status.info("RTK_READY", "RTK stabil – Navigation freigegeben")
         else:
             # Jeder Nicht-FIXED (FLOAT/DGPS/GPS/NO_FIX) unterbricht den Streak.
             if self.fix_streak_start is not None and not self.rtk_ready:
                 rospy.logwarn_throttle(5, "RTK-FIXED unterbrochen vor Freigabe – Streak zurückgesetzt")
+                self.status.warn("RTK_UNSTABLE", "RTK-FIXED unterbrochen vor Freigabe")
             self.fix_streak_start = None
 
         # ── Position NUR aus RTK FIXED übernehmen ─────────────────────────
@@ -190,6 +253,11 @@ class NavigationNode:
         self.current_lat   = new_lat
         self.current_lon   = new_lon
         self.last_fix_time = rospy.Time.now()
+
+        # Gegenflanke zu RTK_LOST: frischer FIXED nach einem Verlust -> RECOVERED.
+        if self.rtk_lost:
+            self.rtk_lost = False
+            self.status.info("RTK_RECOVERED", "RTK-Fix wieder da – Fahrt geht weiter", dedup=False)
 
         rospy.loginfo_throttle(5, f"GPS FIXED: lat={self.current_lat:.7f}, lon={self.current_lon:.7f}")
 
@@ -305,6 +373,10 @@ class NavigationNode:
         if self.last_fix_time is None or \
            (rospy.Time.now() - self.last_fix_time).to_sec() > self.gps_timeout:
             rospy.logwarn_throttle(2, f"Kein frischer RTK-FIXED seit >{self.gps_timeout:.1f}s -> Stop")
+            # Edge: nur beim ersten Eintritt melden; RTK_RECOVERED kommt aus _gps_callback.
+            if not self.rtk_lost:
+                self.rtk_lost = True
+                self.status.error("RTK_LOST", "Kein frischer RTK-FIXED – Roboter stoppt", dedup=False)
             self._publish(0.0, 0.0)
             return False
 
@@ -312,6 +384,9 @@ class NavigationNode:
             if not self.at_goal:
                 rospy.loginfo("Alle Waypoints erreicht! Roboter stoppt.")
                 self.at_goal = True
+                self.status.info("GOAL_REACHED", "Alle Waypoints erreicht – Roboter stoppt")
+                self.state_pub.publish(RobotState.STATE_GOAL_REACHED,
+                                       waypoint_total=len(self.waypoints))
             self._publish(0.0, 0.0)
             return False
 
@@ -332,6 +407,7 @@ class NavigationNode:
         self.calib_start_time = rospy.Time.now()
 
         self.nav_state = "CALIBRATING"
+        self.state_pub.publish(RobotState.STATE_CALIBRATING, waypoint_total=len(self.waypoints))
         rospy.loginfo("Starte Auto-Kalibrierung: Fahre 1.5m geradeaus, um den GPS-Vektor zu messen...")
 
     def _handle_calibrating(self, cur_x: float, cur_y: float):
@@ -393,12 +469,26 @@ class NavigationNode:
             f"Offset={math.degrees(self.heading_offset):.1f}°"
         )
         self.nav_state = "NAVIGATING"
+        self._publish_navigating_state()
         rospy.loginfo("="*50)
         rospy.loginfo(f"KALIBRIERUNG ERFOLGREICH!")
         rospy.loginfo(f"GPS Welt-Winkel: {math.degrees(true_gps_heading):.1f}°")
         rospy.loginfo(f"Roher IMU-Winkel: {math.degrees(self.heading):.1f}°")
         rospy.loginfo(f"Berechneter Offset: {math.degrees(self.heading_offset):.1f}°")
         rospy.loginfo("="*50)
+
+    def _publish_navigating_state(self):
+        """Published STATE_NAVIGATING mit dem aktuellen Ziel-Wegpunkt (1-basiert + lat/lon)."""
+        if self.current_waypoint_index >= len(self.waypoints):
+            return
+        goal_lat, goal_lon = self.waypoints[self.current_waypoint_index]
+        self.state_pub.publish(
+            RobotState.STATE_NAVIGATING,
+            waypoint_index=self.current_waypoint_index + 1,
+            waypoint_total=len(self.waypoints),
+            target_lat=float(goal_lat),
+            target_lon=float(goal_lon),
+        )
 
     # ════════════════════════════════════════════════════════════════════
     # PHASE 2: NORMALE NAVIGATION ZUM ZIEL
@@ -455,6 +545,9 @@ class NavigationNode:
             self.current_waypoint_index += 1
             self.in_tol_since = None
             self.pause_until = rospy.Time.now() + rospy.Duration(self.waypoint_pause_sec)
+            # Wegpunktwechsel -> neuer Ziel-Wegpunkt im State (GOAL_REACHED kommt ggf.
+            # im nächsten _preconditions_met-Durchlauf, wenn keine Wegpunkte mehr da sind).
+            self._publish_navigating_state()
             """
             if self.in_tol_since is None:
                 self.in_tol_since = now

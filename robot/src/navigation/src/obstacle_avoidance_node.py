@@ -9,6 +9,7 @@ und gibt Bypass-Punkte als XY-Werte relativ zu einem gemeinsamen Ursprung zurüc
 
 import json
 import math
+import os
 import rospy
 from collections import namedtuple
 from std_msgs.msg import String
@@ -24,6 +25,7 @@ class ObstacleAvoidanceNode:
         rospy.loginfo("Obstacle Avoidance Node gestartet")
 
     def _init_state(self):
+        # Default-Hindernis bleibt erhalten, falls weder File noch /obstacle_map vorhanden sind.
         self.obstacles = [
             ObstacleBox(
                 lat_min=50.04371426666667,
@@ -34,24 +36,58 @@ class ObstacleAvoidanceNode:
         ]
         self.has_custom_map = False
         self.obstacle_margin = rospy.get_param('~obstacle_margin', 1.0)
+        # Hindernisse kommen primär aus einem JSON-File (vom Frontend auf den Pi geschrieben);
+        # /obstacle_map bleibt zusätzlich als Live-Update-Topic erhalten.
+        self.obstacles_file = rospy.get_param('~obstacles_file',
+                                              '/home/ubuntu/trackSprayRobot/shared_files/obstacles.json')
+        self._load_obstacles_file()
 
     def _init_ros(self):
         self.response_pub = rospy.Publisher('/obstacle_bypass_response', String, queue_size=1)
         rospy.Subscriber('/obstacle_map', String, self._obstacle_map_callback)
         rospy.Subscriber('/obstacle_bypass_request', String, self._request_callback)
 
-    def _obstacle_map_callback(self, msg: String):
-        try:
-            data = json.loads(msg.data)
-            self.obstacles = [
-                ObstacleBox(
+    def _parse_obstacles(self, data):
+        """Wandelt eine Liste von Hindernis-Dicts in normalisierte ObstacleBox-Tupel um.
+
+        Einzelne fehlerhafte Einträge werden übersprungen (mit Warnung), statt das
+        gesamte File/die Map zu verwerfen.
+        """
+        boxes = []
+        for i, o in enumerate(data):
+            try:
+                boxes.append(ObstacleBox(
                     lat_min=min(o['lat_min'], o['lat_max']),
                     lon_min=min(o['lon_min'], o['lon_max']),
                     lat_max=max(o['lat_min'], o['lat_max']),
                     lon_max=max(o['lon_min'], o['lon_max']),
-                )
-                for o in data
-            ]
+                ))
+            except (KeyError, TypeError) as e:
+                rospy.logwarn(f"Hindernis-Eintrag {i} übersprungen (ungültig: {e})")
+        return boxes
+
+    def _load_obstacles_file(self):
+        #TODO: default list only for testing! to be removed in future version
+        """Lädt Hindernisse beim Start aus dem JSON-File; behält bei Fehlern die Default-Liste."""
+        if not os.path.exists(self.obstacles_file):
+            rospy.loginfo(f"Kein Obstacles-File ({self.obstacles_file}) -> Default "
+                          f"({len(self.obstacles)} Hindernisse)")
+            return
+        try:
+            with open(self.obstacles_file, "r") as f:
+                data = json.load(f)
+            self.obstacles = self._parse_obstacles(data)
+            self.has_custom_map = True
+            rospy.loginfo(f"Obstacles aus {self.obstacles_file} geladen: "
+                          f"{len(self.obstacles)} Hindernisse")
+        except (json.JSONDecodeError, KeyError, TypeError, OSError) as e:
+            rospy.logwarn(f"Obstacles-File ungültig ({e}) -> Default "
+                          f"({len(self.obstacles)} Hindernisse)")
+
+    def _obstacle_map_callback(self, msg: String):
+        try:
+            data = json.loads(msg.data)
+            self.obstacles = self._parse_obstacles(data)
             self.has_custom_map = True
             rospy.loginfo_throttle(10, f"Obstacle Map aktualisiert: {len(self.obstacles)} Hindernisse")
         except (json.JSONDecodeError, KeyError, TypeError) as e:

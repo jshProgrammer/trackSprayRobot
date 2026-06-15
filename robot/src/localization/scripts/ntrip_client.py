@@ -18,6 +18,7 @@ from typing import Optional
 
 import rospy
 from std_msgs.msg import String, UInt8MultiArray
+from robot_msgs.status import StatusReporter
 
 version    = 0.2
 useragent  = "NTRIP JCMBsoftPythonClient/%.1f" % version
@@ -50,6 +51,7 @@ class NtripClientNode:
         self.rtcm_pub = rospy.Publisher('gps/rtcm', UInt8MultiArray, queue_size=10)
         rospy.Subscriber('gps/nmea_sentence', String, self._nmea_callback)
 
+        self.status = StatusReporter(source="ntrip_client")
         self.init_logging()
 
         rospy.loginfo("NTRIP Client Node gestartet, wartet auf ersten GGA-Satz...")
@@ -126,6 +128,7 @@ class NtripClientNode:
 
         except socket.gaierror as e:
             self.logger.error(f"DNS-Aufloesung fehlgeschlagen: {e}")
+            self.status.warn("NTRIP_DNS_FAILED", "NTRIP-Server nicht auflösbar (DNS)")
             return None, None
 
     def _build_request(self) -> bytes:
@@ -184,6 +187,7 @@ class NtripClientNode:
             msg = "Kein GGA-Satz empfangen – NTRIP Client beendet sich."
             rospy.logerr(msg)
             self.logger.error(msg)
+            self.status.report_fatal("NTRIP_NO_GGA", "Kein GGA empfangen – NTRIP beendet")
             return
 
         sleep_time = INITIAL_SLEEP
@@ -210,6 +214,7 @@ class NtripClientNode:
                 msg = f"Verbindungsfehler: {e}. Retry in {sleep_time}s"
                 rospy.logwarn(msg)
                 self.logger.warning(msg)
+                self.status.warn("NTRIP_DISCONNECTED", "NTRIP-Verbindungsfehler – Reconnect")
                 sock.close()
                 rospy.sleep(sleep_time)
                 sleep_time = min(sleep_time * FACTOR, MAX_RECONNECT_TIME)
@@ -235,6 +240,8 @@ class NtripClientNode:
                     if ok is False:
                         rospy.logerr(err)
                         self.logger.error(err)
+                        self.status.report_fatal("NTRIP_AUTH_FAILED",
+                                                 f"NTRIP abgelehnt: {err}")
                         return  # fataler Fehler
 
                 if not ok:
@@ -247,6 +254,7 @@ class NtripClientNode:
 
                 rospy.loginfo("NTRIP verbunden – empfange RTCM-Korrekturen")
                 self.logger.info("NTRIP verbunden – empfange RTCM-Korrekturen")
+                self.status.info("NTRIP_CONNECTED", "NTRIP verbunden – empfange Korrekturen")
 
                 # Verbindung war erfolgreich → Backoff zurücksetzen
                 sleep_time    = INITIAL_SLEEP
@@ -261,6 +269,7 @@ class NtripClientNode:
                         if not data:
                             rospy.logwarn("Verbindung vom Caster getrennt.")
                             self.logger.warning("Verbindung vom Caster getrennt.")
+                            self.status.warn("NTRIP_DISCONNECTED", "Caster getrennt – Reconnect")
                             break
                         self._publish_rtcm(data)
 
@@ -277,6 +286,7 @@ class NtripClientNode:
                 msg = f"Verbindungsfehler: {e}. Retry in {sleep_time}s"
                 rospy.logwarn(msg)
                 self.logger.warning(msg)
+                self.status.warn("NTRIP_DISCONNECTED", "NTRIP-Verbindungsfehler – Reconnect")
             finally:
                 sock.close()
 

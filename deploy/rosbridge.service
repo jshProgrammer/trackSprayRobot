@@ -1,0 +1,17 @@
+[Unit]
+Description=TrackSprayRobot roscore + rosbridge websocket (Port 9090)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+# WorkingDirectory + HOME, damit das Wrapper-Skript $HOME/trackSprayRobot/robot findet
+Environment=HOME=/home/ubuntu
+WorkingDirectory=/home/ubuntu/trackSprayRobot
+ExecStart=/home/ubuntu/trackSprayRobot/deploy/start_rosbridge.sh
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
