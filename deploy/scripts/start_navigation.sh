@@ -3,9 +3,9 @@
 # Phase 2 – Kalibrierung + Navigation starten (Motor + IMU + Navigation + Teleop).
 # Wird MANUELL vom Frontend gestartet, NACHDEM der Nutzer die Ausrichtung bestätigt hat.
 # Liest die vom Frontend geschriebenen JSON-Files
-#   /home/ubuntu/tracksprayer/waypoints.json
-#   /home/ubuntu/tracksprayer/obstacles.json
-# implizit über die Nodes ein.
+#   ${TRACKSPRAYER_WAYPOINTS_FILE:-/home/ubuntu/trackSprayRobot/shared_files/waypoints.json}
+#   ${TRACKSPRAYER_OBSTACLES_FILE:-/home/ubuntu/trackSprayRobot/shared_files/obstacles.json}
+# über robot/src/navigation/launch/navigation.launch in die Nodes ein.
 #
 # Bewusst KEIN pkill, KEIN catkin_make (Build läuft schon, Localization läuft weiter).
 
