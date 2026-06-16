@@ -104,7 +104,7 @@ catkin_python_setup()
 catkin_package(
 #  INCLUDE_DIRS include
 #  LIBRARIES navigation
-#  CATKIN_DEPENDS rospy
+#  CATKIN_DEPENDS rospy robot_msgs
 #  DEPENDS system_lib
 )
 
