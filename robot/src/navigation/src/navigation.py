@@ -154,15 +154,15 @@ class NavigationNode:
                 return
             self.pause_until = None
 
-        if self.nav_state == "WAITING_FOR_FIX" and self._preconditions_met():
-            self._initialize_calibration_state(cur_x, cur_y)
+        if not self._preconditions_met():
             return
 
         cur_x, cur_y = gps_to_xy(self.rtk.current_lat, self.rtk.current_lon,
                                  self.rtk.origin_lat, self.rtk.origin_lon)
 
-      
-        if self.nav_state == "CALIBRATING":
+        if self.nav_state == "WAITING_FOR_FIX":
+            self._initialize_calibration_state(cur_x, cur_y)
+        elif self.nav_state == "CALIBRATING":
             self._handle_calibrating(cur_x, cur_y)
         elif self.nav_state == "NAVIGATING":
             self._handle_navigating(cur_x, cur_y)
