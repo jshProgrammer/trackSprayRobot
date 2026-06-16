@@ -46,6 +46,10 @@ class NavParams:
     guide_min_goal_dist: float
     guide_final_gap: float
 
+    # ── Auto-Kalibrierung (Kinematic Alignment) ─────────────────────────
+    calib_distance: float
+    calib_min_time: float
+
     @classmethod
     def from_rosparam(cls) -> "NavParams":
         return cls(
@@ -84,4 +88,7 @@ class NavParams:
             guide_min_goal_dist=rospy.get_param('~guide_min_goal_dist', 3.0),
             # Der letzte Leitpunkt liegt mind. so weit vorm Ziel -> freie, gerade Endanfahrt
             guide_final_gap=rospy.get_param('~guide_final_gap', 1.5),
+            # Auto-Kalibrierung: Strecke geradeaus, bis der GPS-Vektor stabil ist
+            calib_distance=rospy.get_param('~calib_distance', 3.0),
+            calib_min_time=rospy.get_param('~calib_min_time', 3.0),
         )

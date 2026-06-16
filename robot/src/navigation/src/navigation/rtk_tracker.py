@@ -3,7 +3,7 @@
 Kapselt den gesamten GPS-Positions-State der Navigation inklusive der
 GPS-Subscriber (gps/fix, gps/quality). Der Node ruft einmal
 ``start_subscribers()`` auf und liest danach Position, Freigabe
-(``rtk_ready``) und Frische (``last_fix_time``) ab.
+(``rtk_fix_initialized``) und Frische (``last_fix_time``) ab.
 
 Status-Reporter und Logger werden injiziert, rospy.Time wird direkt genutzt
 (identisches Zeitverhalten wie zuvor in der Node). Der Konstruktor selbst
@@ -43,30 +43,11 @@ class RTKTracker:
         self._status = status
         self._logger = logger
 
-    def set_status(self, status):
-        """Status-Reporter nachreichen (wird erst in _init_ros der Node erzeugt)."""
-        self._status = status
-
-    def start_subscribers(self):
-        """Legt die GPS-Subscriber an. Erst nach rospy.init_node aufrufen."""
-        rospy.Subscriber('gps/fix', NavSatFix, self._gps_callback)
-        rospy.Subscriber('gps/quality', UInt8, self._gps_quality_callback)
-
-    def _gps_callback(self, msg: NavSatFix):
-        self.process_fix(msg)
-
-    def _gps_quality_callback(self, msg):
-        # Wird als Quer-Check beim Sprühen genutzt (require_fix_for_spray).
-        # Die Navigations-Freigabe selbst läuft über den stabilen FIXED-Streak
-        # (RTK-Status aus der Kovarianz der Fix-Nachricht).
-        self.set_quality(msg.data)
-        rospy.loginfo_throttle(5, f"GPS Quality = {self.gps_quality}")
-
         # ── GPS-State ────────────────────────────────────────────────────
         self.current_lat = None
         self.current_lon = None
         self.has_fix = False
-        self.rtk_ready = False     # wird erst nach stabilem FIXED-Streak True
+        self.rtk_fix_initialized = False     # wird erst nach stabilem FIXED-Streak True
         self.gps_quality = 0
 
         self.fix_streak_start = None  # Beginn des aktuellen ununterbrochenen FIXED-Streaks
@@ -79,31 +60,27 @@ class RTKTracker:
         # StatusReporter durch andere Events (z.B. GOAL_REACHED) zurückgesetzt würde.
         self.rtk_lost = False
 
+    def set_status(self, status):
+        """Status-Reporter nachreichen (wird erst in _init_ros der Node erzeugt)."""
+        self._status = status
+
+    def start_subscribers(self):
+        """Legt die GPS-Subscriber an. Erst nach rospy.init_node aufrufen."""
+        rospy.Subscriber('gps/fix', NavSatFix, self.process_fix)
+        rospy.Subscriber('gps/quality', UInt8, self._gps_quality_callback)
+
+    def _gps_quality_callback(self, msg):
+        # Wird als Quer-Check beim Sprühen genutzt (require_fix_for_spray).
+        # Die Navigations-Freigabe selbst läuft über den stabilen FIXED-Streak
+        # (RTK-Status aus der Kovarianz der Fix-Nachricht).
+        self.set_quality(msg.data)
+        rospy.loginfo_throttle(5, f"GPS Quality = {self.gps_quality}")
+
     def process_fix(self, msg):
-        """Verarbeitet eine NavSatFix-Nachricht (vormals _gps_callback)."""
+        """Verarbeitet eine NavSatFix-Nachricht."""
         rtk = parse_rtk_status(msg)
 
-        # ── Startup-Gate: RTK muss erst STABIL FIXED sein ─────────────────
-        # Ein einzelner FIXED-Treffer reicht NICHT. Wir verlangen einen
-        # ununterbrochenen FIXED-Streak von rtk_stable_sec Sekunden, bevor
-        # die Navigation freigegeben wird (Beobachtung: anfangs flackert
-        # FIXED/FLOAT, erst danach wird es regelmäßig).
-        if rtk == RTKStatus.FIXED:
-            if self.fix_streak_start is None:
-                self.fix_streak_start = rospy.Time.now()
-            streak = (rospy.Time.now() - self.fix_streak_start).to_sec()
-            if not self.rtk_ready and streak >= self._p.rtk_stable_sec:
-                self.rtk_ready = True
-                debug_output = f"RTK stabil ({streak:.1f}s FIXED am Stück) -> Navigation freigegeben"
-                rospy.loginfo(debug_output)
-                self._logger.info(debug_output)
-                self._status.info("RTK_READY", "RTK stabil – Navigation freigegeben")
-        else:
-            # Jeder Nicht-FIXED (FLOAT/DGPS/GPS/NO_FIX) unterbricht den Streak.
-            if self.fix_streak_start is not None and not self.rtk_ready:
-                rospy.logwarn_throttle(5, "RTK-FIXED unterbrochen vor Freigabe – Streak zurückgesetzt")
-                self._status.warn("RTK_UNSTABLE", "RTK-FIXED unterbrochen vor Freigabe")
-            self.fix_streak_start = None
+        self.startup_calibrating(rtk)
 
         # ── Position NUR aus RTK FIXED übernehmen ─────────────────────────
         # FLOAT/DGPS/GPS verursachen 30-50cm-Sprünge. Statt sie zu nutzen,
@@ -149,6 +126,30 @@ class RTKTracker:
             rospy.loginfo(debug_output)
             self._logger.info(debug_output)
 
+    def startup_calibrating(self, rtk):
+        # ── Startup-Gate: RTK muss erst STABIL FIXED sein ─────────────────
+        # Ein einzelner FIXED-Treffer reicht NICHT. Wir verlangen einen
+        # ununterbrochenen FIXED-Streak von rtk_stable_sec Sekunden, bevor
+        # die Navigation freigegeben wird (Beobachtung: anfangs flackert
+        # FIXED/FLOAT, erst danach wird es regelmäßig).
+        if rtk == RTKStatus.FIXED:
+            if self.fix_streak_start is None:
+                self.fix_streak_start = rospy.Time.now()
+            streak = (rospy.Time.now() - self.fix_streak_start).to_sec()
+            if not self.rtk_fix_initialized and streak >= self._p.rtk_stable_sec:
+                self.rtk_fix_initialized = True
+                debug_output = f"RTK stabil ({streak:.1f}s FIXED am Stück) -> Navigation freigegeben"
+                rospy.loginfo(debug_output)
+                self._logger.info(debug_output)
+                self._status.info("rtk_fix_initialized", "RTK stabil – Navigation freigegeben")
+        else:
+            # Jeder Nicht-FIXED (FLOAT/DGPS/GPS/NO_FIX) unterbricht den Streak.
+            if self.fix_streak_start is not None and not self.rtk_fix_initialized:
+                rospy.logwarn_throttle(5, "RTK-FIXED unterbrochen vor Freigabe – Streak zurückgesetzt")
+                self._status.warn("RTK_UNSTABLE", "RTK-FIXED unterbrochen vor Freigabe")
+            self.fix_streak_start = None
+
+
     def set_quality(self, quality: int):
         """Wird als Quer-Check beim Sprühen genutzt (require_fix_for_spray)."""
         self.gps_quality = quality
@@ -158,6 +159,3 @@ class RTKTracker:
         if self.last_fix_time is None:
             return False
         return (rospy.Time.now() - self.last_fix_time).to_sec() <= self._p.gps_timeout
-
-    def has_origin(self) -> bool:
-        return self.origin_lat is not None and self.origin_lon is not None

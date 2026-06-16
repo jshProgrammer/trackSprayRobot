@@ -154,28 +154,24 @@ class NavigationNode:
                 return
             self.pause_until = None
 
-        if not self._preconditions_met():
+        if self.nav_state == "WAITING_FOR_FIX" and self._preconditions_met():
+            self._initialize_calibration_state(cur_x, cur_y)
             return
 
         cur_x, cur_y = gps_to_xy(self.rtk.current_lat, self.rtk.current_lon,
                                  self.rtk.origin_lat, self.rtk.origin_lon)
 
-        if self.nav_state == "WAITING_FOR_FIX":
-            self._handle_waiting_for_fix(cur_x, cur_y)
-        elif self.nav_state == "CALIBRATING":
+      
+        if self.nav_state == "CALIBRATING":
             self._handle_calibrating(cur_x, cur_y)
         elif self.nav_state == "NAVIGATING":
             self._handle_navigating(cur_x, cur_y)
 
     def _preconditions_met(self) -> bool:
         """Returns False (and stops the robot) if any required condition is not yet satisfied."""
-        if not self.rtk.rtk_ready:
+        if not self.rtk.rtk_fix_initialized:
             rospy.logwarn_throttle(
                 2, f"Warte auf stabilen RTK-FIXED ({self.p.rtk_stable_sec:.0f}s am Stück)...")
-            self.motion.stop()
-            return False
-
-        if not self.rtk.has_fix:
             self.motion.stop()
             return False
 
@@ -183,7 +179,7 @@ class NavigationNode:
         # Während kurzer FLOAT-Phasen halten wir die letzte Position; bleibt FIXED
         # länger als gps_timeout weg, wird gestoppt statt auf veralteter Position
         # weiterzufahren.
-        if not self.rtk.is_fix_fresh():
+        if not self.rtk.is_fix_fresh() or not self.rtk.has_fix:
             rospy.logwarn_throttle(
                 2, f"Kein frischer RTK-FIXED seit >{self.p.gps_timeout:.1f}s -> Stop")
             # Edge: nur beim ersten Eintritt melden; RTK_RECOVERED kommt aus dem RTKTracker.
@@ -203,17 +199,12 @@ class NavigationNode:
             self.motion.stop()
             return False
 
-        if not self.rtk.has_origin():
-            rospy.logwarn_throttle(2, "Warte auf GPS-Ursprung...")
-            self.motion.stop()
-            return False
-
         return True
 
     # ════════════════════════════════════════════════════════════════════
     # PHASE 1: AUTOMATISCHE KALIBRIERUNG (Kinematic Alignment)
     # ════════════════════════════════════════════════════════════════════
-    def _handle_waiting_for_fix(self, cur_x: float, cur_y: float):
+    def _initialize_calibration_state(self, cur_x: float, cur_y: float):
         """Records the calibration start position and transitions to CALIBRATING."""
         self.calib.start(cur_x, cur_y)
         self.nav_state = "CALIBRATING"

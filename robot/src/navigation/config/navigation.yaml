@@ -45,6 +45,10 @@ navigation:
   obstacle_margin: 1.0         # m – Abstand zum Hindernis beim Pfadcheck
   waypoint_pause_sec: 5.0      # s – Pause nach dem Sprühen (non-blocking)
 
+  # ── Auto-Kalibrierung (Kinematic Alignment) ────────────────────────────
+  calib_distance: 3.0          # m – so weit geradeaus fahren, bis der GPS-Vektor stabil ist
+  calib_min_time: 3.0          # s – Mindestdauer der Kalibrierfahrt
+
   waypoints:
     - [50.04369625, 10.207500116666667] # neuer PUnkten hinten am Parkplatz 8.6.
     #- [50.043672683333334, 10.207673066666667] # punkt hinten am parkplatz   bzw, 50.04367276666667, 10.20767285
