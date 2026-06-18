@@ -95,6 +95,8 @@ abonniert nur dieses eine Topic und filtert über `source` / `type` / `code`.
 | ntrip_client | `NTRIP_AUTH_FAILED` | error | NTRIP abgelehnt (Auth/Mountpoint, Node beendet sich) |
 | ntrip_client | `NTRIP_NO_GGA` | error | Kein GGA empfangen (Node beendet sich) |
 | pwm_drive | `MOTOR_PIGPIOD_DOWN` | error | pigpio-Daemon läuft nicht – Roboter kann nicht fahren |
+| emergency_kill | `EMERGENCY_STOP` | error | Not-Aus ausgelöst; Fahr-/Navigationsprozesse werden beendet |
+| emergency_kill | `SOFT_RESET` | warn | Soft-Reset ausgelöst; Motortreiber wird neu gestartet |
 
 ---
 
