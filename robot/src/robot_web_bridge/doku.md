@@ -47,19 +47,37 @@ aktuellen Zustand).
 | Feld | Typ | Bedeutung |
 |---|---|---|
 | `stamp` | `time` | Zeitpunkt des Zustands |
-| `state` | `uint8` | `0`=IDLE · `1`=CALIBRATING · `2`=NAVIGATING · `3`=GOAL_REACHED |
-| `state_name` | `string` | Klartext-Label (`IDLE` \| `CALIBRATING` \| `NAVIGATING` \| `GOAL_REACHED`) |
+| `state` | `uint8` | `0`=IDLE · `1`=CALIBRATING · `2`=NAVIGATING · `3`=GOAL_REACHED · `4`=PAUSED |
+| `state_name` | `string` | Klartext-Label (`IDLE` \| `CALIBRATING` \| `NAVIGATING` \| `GOAL_REACHED` \| `PAUSED`) |
 | `waypoint_index` | `uint16` | aktueller Ziel-Wegpunkt, **1-basiert** (N von total); `0` wenn n/a |
 | `waypoint_total` | `uint16` | Anzahl Ziel-Wegpunkte |
-| `target_lat` | `float64` | Zielkoordinate – **nur** im Zustand `NAVIGATING` gesetzt, sonst `0.0` |
+| `target_lat` | `float64` | Zielkoordinate – in `NAVIGATING` und `PAUSED` gesetzt, sonst `0.0` |
 | `target_lon` | `float64` | s.o. |
 
 **Zustände:** `IDLE` = wartet auf stabilen RTK-FIXED · `CALIBRATING` = fährt 3 m
 geradeaus zur Heading-Kalibrierung · `NAVIGATING` = fährt zum Ziel-Wegpunkt
-(`waypoint_index`/`target_*`) · `GOAL_REACHED` = alle Wegpunkte abgefahren.
+(`waypoint_index`/`target_*`) · `GOAL_REACHED` = alle Wegpunkte abgefahren ·
+`PAUSED` = autonome Navigation pausiert; der Controller kann manuell fahren.
 
 > `target_lat/lon` sind nur die **echten** Ziel-Wegpunkte – Hindernis-Umfahrungspunkte
-> erscheinen hier nicht (Zustand bleibt `NAVIGATING` mit dem eigentlichen Ziel).
+> erscheinen hier nicht (`NAVIGATING`/`PAUSED` zeigen weiter das eigentliche Ziel).
+
+---
+
+### `/navigation_pause`
+**Typ:** `std_msgs/Bool` · **Richtung:** Client → Robot
+
+Pausiert oder setzt die autonome Navigation fort, ohne die Navigation-Node zu beenden.
+Während `PAUSED` publiziert die Navigation keine Fahrbefehle auf `/cmd_vel_controll`,
+damit der Controller manuell steuern kann.
+
+| Feld | Typ | Bedeutung |
+|---|---|---|
+| `data` | `bool` | `true` = pausieren · `false` = fortsetzen |
+
+Beim Fortsetzen bleibt der aktuelle Ziel-Wegpunkt erhalten. Leitpunkte und
+Hindernis-Umfahrungspunkte werden verworfen und von der aktuellen Roboterposition aus
+neu berechnet; der Roboter fährt also nicht zur Position vor der Pause zurück.
 
 ---
 
@@ -86,6 +104,8 @@ abonniert nur dieses eine Topic und filtert über `source` / `type` / `code`.
 | navigation | `RTK_UNSTABLE` | warn | RTK-FIXED unterbrochen vor Freigabe |
 | navigation | `RTK_LOST` | error | Kein frischer RTK-FIXED – Roboter stoppt |
 | navigation | `RTK_RECOVERED` | info | RTK-Fix wieder da – Fahrt geht weiter |
+| navigation | `NAVIGATION_PAUSED` | info | Autonome Navigation pausiert; manuelle Steuerung möglich |
+| navigation | `NAVIGATION_RESUMED` | info | Autonome Navigation fortgesetzt |
 | navigation | `GOAL_REACHED` | info | Alle Waypoints erreicht – Roboter stoppt |
 | gps_node | `GPS_SERIAL_FAILED` | error | GPS-Sensor nicht erreichbar (Node beendet sich) |
 | gps_node | `GPS_SERIAL_READ_ERROR` | warn | Lesefehler auf serieller GPS-Leitung |

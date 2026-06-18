@@ -23,7 +23,7 @@ import os
 
 import rospy
 from sensor_msgs.msg import Imu
-from std_msgs.msg import String, Empty
+from std_msgs.msg import String, Empty, Bool
 
 from spray_counter import spray
 from robot_msgs.status import StatusReporter, StatePublisher
@@ -83,13 +83,17 @@ class NavigationNode:
 
         # ── Obstacle Bypass-State ─────────────────────────────────────────
         self.bypass_targets = []   # Liste von (x, y) Umfahrungspunkten (leer = keine Umfahrung)
+        self.ignore_bypass_responses_until = None
 
         # ── Leitpunkt-State (virtuelle Waypoints, kein Spray) ─────────────
         self.guide_targets = []          # Liste von (x, y) Leitpunkten
         self.guide_waypoint_index = None  # für welchen Waypoint die Leitpunkte berechnet wurden
 
         # ── State-Machine ────────────────────────────────────────────────
-        self.nav_state = "WAITING_FOR_FIX"  # WAITING_FOR_FIX -> CALIBRATING -> NAVIGATING
+        # WAITING_FOR_FIX -> CALIBRATING -> NAVIGATING; PAUSED merkt sich den
+        # vorherigen Zustand in nav_state_before_pause.
+        self.nav_state = "WAITING_FOR_FIX"
+        self.nav_state_before_pause = None
 
         # ── Module mit eigenem State ─────────────────────────────────────
         self.rtk = RTKTracker(self.p, None, self.logger)   # status wird in _init_ros gesetzt
@@ -107,12 +111,26 @@ class NavigationNode:
         self.rtk.start_subscribers()
         rospy.Subscriber('imu/data', Imu, self._imu_callback)
         rospy.Subscriber('/obstacle_bypass_response', String, self._bypass_response_callback)
+        rospy.Subscriber('/navigation_pause', Bool, self._pause_callback)
         rospy.Timer(rospy.Duration(0.01), self._control_loop)   # 100 Hz
 
     # ════════════════════════════════════════════════════════════════════
     # CALLBACKS
     # ════════════════════════════════════════════════════════════════════
     def _bypass_response_callback(self, msg: String):
+        if self.nav_state == "PAUSED":
+            rospy.loginfo_throttle(2, "Bypass-Antwort während Pause ignoriert")
+            return
+
+        # Nach einer manuellen Pause kann noch eine alte Bypass-Antwort zur
+        # Position vor der Pause eintreffen. Kurz ignorieren, damit die
+        # Navigation von der neuen Position frisch plant.
+        if self.ignore_bypass_responses_until is not None:
+            if rospy.Time.now() < self.ignore_bypass_responses_until:
+                rospy.loginfo_throttle(2, "Veraltete Bypass-Antwort nach Pause ignoriert")
+                return
+            self.ignore_bypass_responses_until = None
+
         try:
             data = json.loads(msg.data)
             if isinstance(data, dict) and 'bypass_targets' in data:
@@ -142,10 +160,21 @@ class NavigationNode:
             self.has_imu = True
             rospy.loginfo(f"IMU aktiv. Erster roher Heading: {math.degrees(self.heading):.1f}°")
 
+    def _pause_callback(self, msg: Bool):
+        if msg.data:
+            self._enter_paused()
+        else:
+            self._resume_from_pause()
+
     # ════════════════════════════════════════════════════════════════════
     # HAUPTREGELSCHLEIFE (100 Hz)
     # ════════════════════════════════════════════════════════════════════
     def _control_loop(self, event):
+        if self.nav_state == "PAUSED":
+            # User-Pause: Navigation gibt den Fahrkanal frei, damit der Controller
+            # manuell auf /cmd_vel_controll steuern kann.
+            return
+
         # Non-blocking Pause nach dem Sprühen (ersetzt das blockierende time.sleep,
         # das zuvor den 100-Hz-Timer-Thread einfror).
         if self.pause_until is not None:
@@ -166,6 +195,74 @@ class NavigationNode:
             self._handle_calibrating(cur_x, cur_y)
         elif self.nav_state == "NAVIGATING":
             self._handle_navigating(cur_x, cur_y)
+
+    def _enter_paused(self):
+        if self.nav_state == "PAUSED":
+            return
+
+        if self.nav_state not in ("WAITING_FOR_FIX", "CALIBRATING", "NAVIGATING"):
+            rospy.logwarn(f"Pause in Zustand {self.nav_state} ignoriert")
+            return
+
+        self.nav_state_before_pause = self.nav_state
+        self.nav_state = "PAUSED"
+        self.pause_until = None
+        self.in_tol_since = None
+        self.motion.stop()
+        self._publish_paused_state()
+        self.status.info(
+            "NAVIGATION_PAUSED",
+            "Autonome Navigation pausiert – manuelle Steuerung ist möglich",
+            dedup=False,
+        )
+        rospy.loginfo("Autonome Navigation pausiert; /cmd_vel_controll wird freigegeben")
+
+    def _resume_from_pause(self):
+        if self.nav_state != "PAUSED":
+            return
+
+        previous_state = self.nav_state_before_pause or "WAITING_FOR_FIX"
+        self.nav_state_before_pause = None
+
+        # Nach manueller Bewegung sind alte Zwischenziele nicht mehr verlässlich.
+        # Der aktuelle Ziel-Waypoint bleibt erhalten und wird von der neuen
+        # Position aus wieder angefahren.
+        self.bypass_targets = []
+        self.guide_targets = []
+        self.guide_waypoint_index = None
+        self.in_tol_since = None
+        self.pause_until = None
+        self.ignore_bypass_responses_until = rospy.Time.now() + rospy.Duration(0.2)
+
+        if previous_state == "CALIBRATING":
+            self.nav_state = "WAITING_FOR_FIX"
+            self.state_pub.publish(RobotState.STATE_IDLE, waypoint_total=len(self.waypoints))
+            message = "Navigation freigegeben – Kalibrierung wird von aktueller Position neu gestartet"
+        else:
+            self.nav_state = previous_state
+            if self.nav_state == "NAVIGATING":
+                self._publish_navigating_state()
+                message = "Navigation freigegeben – aktueller Waypoint wird von neuer Position angefahren"
+            else:
+                self.state_pub.publish(RobotState.STATE_IDLE, waypoint_total=len(self.waypoints))
+                message = "Navigation freigegeben"
+
+        self.status.info("NAVIGATION_RESUMED", message, dedup=False)
+        rospy.loginfo(message)
+
+    def _publish_paused_state(self):
+        if self.current_waypoint_index >= len(self.waypoints):
+            self.state_pub.publish(RobotState.STATE_PAUSED, waypoint_total=len(self.waypoints))
+            return
+
+        goal_lat, goal_lon = self.waypoints[self.current_waypoint_index]
+        self.state_pub.publish(
+            RobotState.STATE_PAUSED,
+            waypoint_index=self.current_waypoint_index + 1,
+            waypoint_total=len(self.waypoints),
+            target_lat=float(goal_lat),
+            target_lon=float(goal_lon),
+        )
 
     def _preconditions_met(self) -> bool:
         """Returns False (and stops the robot) if any required condition is not yet satisfied."""
