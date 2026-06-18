@@ -6,10 +6,26 @@
 
 ## Topics
 
-> **Hinweis:** Waypoints und Hindernisse werden **nicht** über rosbridge gesendet,
-> sondern als JSON-Files direkt auf den Pi geschrieben
-> (`/home/ubuntu/trackSprayRobot/shared_files/waypoints.json` + `obstacles.json`, siehe
+> **Hinweis:** Waypoints, Hindernisse und Dosenstand werden **nicht** über rosbridge übertragen,
+> sondern als Dateien im Shared-Folder ausgetauscht
+> (`/home/ubuntu/trackSprayRobot/shared_files/waypoints.json`, `obstacles.json`,
+> `dosenstand.txt`, siehe
 > `deploy/README.md`). Diese Doku beschreibt nur die rosbridge-Live-Datenflüsse.
+
+## Shared Files
+
+Diese Dateien liegen standardmäßig unter `/home/ubuntu/trackSprayRobot/shared_files/`.
+
+| Datei | Richtung | Format | Bedeutung |
+|---|---|---|---|
+| `waypoints.json` | Client → Robot | JSON | Ziel-Waypoints, z.B. `[{"lat":..,"lon":..}]` oder `[[lat, lon], ...]` |
+| `obstacles.json` | Client → Robot | JSON | Hindernis-Rechtecke, z.B. `[{"lat_min":..,"lon_min":..,"lat_max":..,"lon_max":..}]` |
+| `dosenstand.txt` | Robot → Client | Text | Restinhalt der Sprühdose in Gramm, z.B. `249.75` |
+
+Falls `dosenstand.txt` fehlt, startet der Zähler intern mit `250.0` g. Pro
+automatischem Waypoint-Spray zieht die Navigation `0.25` g ab. Der Pfad kann über
+die Umgebungsvariable `DOSENSTAND_FILE` überschrieben werden; der alte Pfad
+`/home/ubuntu/dosenstand.txt` wird nur noch als Lesefallback unterstützt.
 
 ### `gps/fix`
 **Typ:** `sensor_msgs/NavSatFix` · **Richtung:** Robot → Client

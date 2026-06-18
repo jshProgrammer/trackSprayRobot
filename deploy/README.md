@@ -8,15 +8,16 @@ Reihenfolge und Verantwortlichkeiten der Start-Mechanismen:
 | Localization (GPS + NTRIP) | **manuell vom Frontend** (`start_localization.sh`) | Phase 1 – Roboter wird READY |
 | Navigation (Motor + IMU + Nav + Teleop) | **manuell vom Frontend** (`start_navigation.sh`) | Phase 2 – Kalibrierung + Fahren |
 
-Das Frontend schreibt vorher die JSON-Files direkt auf den Pi. Standardpfade:
+Frontend und Robot tauschen Laufzeitdaten über den Shared-Folder aus. Standardpfade:
 - `/home/ubuntu/trackSprayRobot/shared_files/waypoints.json` – `[{"lat":..,"lon":..}, ...]` oder `[[lat, lon], ...]`
 - `/home/ubuntu/trackSprayRobot/shared_files/obstacles.json` – `[{"lat_min":..,"lon_min":..,"lat_max":..,"lon_max":..}, ...]`
+- `/home/ubuntu/trackSprayRobot/shared_files/dosenstand.txt` – Plain-Text-Grammwert, wird beim automatischen Spray aktualisiert
 
 Die Pfade können vom Backend über `TRACKSPRAYER_WAYPOINTS_FILE` und
 `TRACKSPRAYER_OBSTACLES_FILE` überschrieben werden. `navigation.launch` reicht
-diese Werte an die ROS-Nodes weiter.
-
-Der Sprühdosenstand bleibt unter `/home/ubuntu/dosenstand.txt` (Frontend liest direkt).
+diese Werte an die ROS-Nodes weiter. Der Dosenstand kann über `DOSENSTAND_FILE`
+überschrieben werden; falls noch `/home/ubuntu/dosenstand.txt` existiert, wird dieser
+alte Pfad einmalig als Lesefallback verwendet und danach in `shared_files` geschrieben.
 
 ## Einmaliges Setup auf dem Pi
 
@@ -30,7 +31,7 @@ chmod +x ~/trackSprayRobot/deploy/scripts/start_localization.sh \
          ~/trackSprayRobot/deploy/scripts/start_navigation.sh \
          ~/trackSprayRobot/deploy/start_rosbridge.sh
 
-# 3. Verzeichnis für die Frontend-JSON-Files
+# 3. Verzeichnis für Frontend/Robot-Shared-State
 mkdir -p /home/ubuntu/trackSprayRobot/shared_files
 
 # 4. systemd-Service installieren (roscore + rosbridge ab Boot)
