@@ -82,6 +82,39 @@ Connects to an NTRIP caster and receives RTCM correction data. Requires no direc
 
 ---
 
+## RTK Credentials Config
+
+`launch/localization.launch` loads `config/rtk_credentials.yaml`. Create that
+file from the example and keep real credentials local:
+
+```bash
+cp robot/src/localization/config/rtk_credentials.example.yaml \
+   robot/src/localization/config/rtk_credentials.yaml
+```
+
+Expected structure:
+
+```yaml
+ntrip_client:
+  caster: "sapos-rtk.bayern.de"
+  port: 2101
+  mountpoint: "VRS_3_4G_BY"
+  user: "DEIN_NTRIP_USERNAME"
+  password: "DEIN_NTRIP_PASSWORD"
+  verbose: false
+
+gps_node:
+  port: "/dev/ttyUSB0"
+  baud: 115200
+  frame_id: "gps_link"
+  gps_rate_hz: 10
+```
+
+The names matter: `ntrip_client.py` reads `~caster` and `~user`, not `~host`
+or `~username`.
+
+---
+
 ## Usage
 
 ```bash
