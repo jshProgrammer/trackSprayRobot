@@ -28,14 +28,14 @@ class ObstacleAvoidanceNode:
         # Default-Hindernis bleibt erhalten, falls weder File noch /obstacle_map vorhanden sind.
         self.obstacles = [
             ObstacleBox(
-                lat_min=50.04371426666667,
-                lon_min=10.207508833333334,
-                lat_max=50.043730733333334,
-                lon_max=10.207527733333333,
+                lat_min=50.04371368333333,
+                lon_min=10.207532816666667,
+                lat_max=50.04374071666667,
+                lon_max=10.207565816666667,
             ),
         ]
         self.has_custom_map = False
-        self.obstacle_margin = rospy.get_param('~obstacle_margin', 1.0)
+        self.obstacle_margin = max(rospy.get_param('~obstacle_margin', 1.0), 0.5)
         # Hindernisse kommen primär aus einem JSON-File (vom Frontend auf den Pi geschrieben);
         # /obstacle_map bleibt zusätzlich als Live-Update-Topic erhalten.
         self.obstacles_file = rospy.get_param('~obstacles_file',
@@ -187,6 +187,14 @@ class ObstacleAvoidanceNode:
 
         return t_min <= t_max
 
+    def _path_avoids_rect(self, points, x_min, y_min, x_max, y_max) -> bool:
+        for i in range(len(points) - 1):
+            if self._segment_intersects_rect(points[i][0], points[i][1],
+                                            points[i + 1][0], points[i + 1][1],
+                                            x_min, y_min, x_max, y_max):
+                return False
+        return True
+
     def _compute_bypass_points(self, robot_x, robot_y, goal_x, goal_y,
                                origin_lat, origin_lon, obs, obstacle_margin):
         ox_min, oy_min = self._gps_to_xy(obs.lat_min, obs.lon_min, origin_lat, origin_lon)
@@ -196,11 +204,12 @@ class ObstacleAvoidanceNode:
 
     def _compute_bypass_points_xy(self, robot_x, robot_y, goal_x, goal_y,
                                   ox_min, oy_min, ox_max, oy_max, obstacle_margin):
+        obstacle_margin = max(obstacle_margin, 0.5)
         ox_min -= obstacle_margin
         oy_min -= obstacle_margin
         ox_max += obstacle_margin
         oy_max += obstacle_margin
-        extra = max(0.2, obstacle_margin * 0.2)
+        extra = max(0.5, obstacle_margin * 0.2)
 
         center_x = 0.5 * (ox_min + ox_max)
         center_y = 0.5 * (oy_min + oy_max)
@@ -217,8 +226,9 @@ class ObstacleAvoidanceNode:
                 side_points = [(ox_min - extra, oy_min), (ox_min - extra, oy_max)]
 
         p1, p2 = sorted(side_points, key=lambda p: (p[0] - robot_x) ** 2 + (p[1] - robot_y) ** 2)
+        lane = [p1, p2, (goal_x, goal_y)]
 
-        if self._segment_intersects_rect(p2[0], p2[1], goal_x, goal_y, ox_min, oy_min, ox_max, oy_max):
+        if not self._path_avoids_rect(lane, ox_min, oy_min, ox_max, oy_max):
             alternative = self._alternative_bypass_points(robot_x, robot_y, goal_x, goal_y,
                                                          ox_min, oy_min, ox_max, oy_max, extra)
             if alternative is not None:

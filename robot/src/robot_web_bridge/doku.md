@@ -82,7 +82,7 @@ abonniert nur dieses eine Topic und filtert über `source` / `type` / `code`.
 
 | source | code | type | Bedeutung |
 |---|---|---|---|
-| navigation | `RTK_READY` | info | RTK stabil – Navigation freigegeben |
+| navigation | `RTK_FIX_INITIALIZED` | info | RTK stabil – Navigation freigegeben |
 | navigation | `RTK_UNSTABLE` | warn | RTK-FIXED unterbrochen vor Freigabe |
 | navigation | `RTK_LOST` | error | Kein frischer RTK-FIXED – Roboter stoppt |
 | navigation | `RTK_RECOVERED` | info | RTK-Fix wieder da – Fahrt geht weiter |
