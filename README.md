@@ -3,7 +3,7 @@
 ## Project Work in Cooperation with Mainfranken Racing
 
 This project is developed in collaboration with **Mainfranken Racing**,
-the Formula Student team based of the THWS.
+the Formula Student team based at THWS.
 
 The goal is to design and implement an **autonomous differential-drive
 robot** capable of spraying race track markings on asphalt according to
@@ -33,7 +33,7 @@ Develop a mobile robot that:
     ground)
 -   Can be controlled using a PlayStation Controller for manual testing
 
-The system will be implemented using **ROS Noetic** on embedded hardware
+The system is implemented using **ROS Noetic** on embedded hardware
 (Raspberry Pi).
 
 ------------------------------------------------------------------------
@@ -106,10 +106,50 @@ The robot software is organized into modular ROS packages.
 
 ```text
 robot/
-├── bringup/              # Central launch package
-├── motor_control/        # PWM control and motor drivers
-├── localization/         # GPS, RTK, NTRIP and localization nodes
-├── teleop/               # Joystick control and emergency stop
+└── src/
+    ├── bringup/                  # Central startup package
+    │   └── launch/               # Full and phase-specific launch files
+    ├── imu/                      # IMU package
+    │   ├── launch/
+    │   └── scripts/              # imu_node.py
+    ├── localization/             # GPS, RTK and NTRIP package
+    │   ├── config/               # RTK/NTRIP credentials template
+    │   ├── launch/
+    │   └── scripts/              # gps_node.py, ntrip_client.py
+    ├── motor_control/            # PWM control and motion filtering package
+    │   ├── config/
+    │   ├── launch/
+    │   └── scripts/              # PWM driver and Kalman filter
+    ├── navigation/               # Waypoint navigation and spray package
+    │   ├── config/
+    │   ├── launch/
+    │   ├── src/                  # Navigation nodes and helper modules
+    ├── robot_msgs/               # Custom RobotState and RobotStatus messages
+    │   ├── msg/
+    │   └── src/
+    ├── robot_web_bridge/         # rosbridge launch and bridge documentation
+    │   └── launch/
+    └── teleop/                   # Joystick control and emergency stop
+        ├── launch/
+        ├── msg/
+        └── scripts/
+```
+
+The `navigation` package is split into entry-point nodes and reusable helper
+modules:
+
+```text
+robot/src/navigation/src/
+├── navigation.py                 # Main navigation state machine
+├── obstacle_avoidance_node.py    # Obstacle bypass handling
+├── spray_counter.py              # Spray-can fill estimation
+└── navigation/
+    ├── geo.py                    # Geodesy helpers
+    ├── heading_calibrator.py     # Initial heading calibration
+    ├── motion_controller.py      # /cmd_vel_controll publisher wrapper
+    ├── params.py                 # Navigation parameter loading
+    ├── rtk_tracker.py            # GPS/RTK state tracking
+    └── waypoint_guidepoints.py   # Intermediate guidepoint generation
 ```
 
 ## 🚀 Central Launch System
@@ -121,9 +161,11 @@ bringup launch file.
 
 ```xml
 <launch>
-    <include file="$(find motor_control)/launch/motor.launch"/>
-    <include file="$(find localization)/launch/gps.launch"/>
     <include file="$(find teleop)/launch/teleop.launch"/>
+    <include file="$(find motor_control)/launch/motor.launch"/>
+    <include file="$(find localization)/launch/localization.launch"/>
+    <include file="$(find imu)/launch/imu.launch"/>
+    <include file="$(find navigation)/launch/navigation.launch"/>
 </launch>
 ```
 
@@ -133,6 +175,38 @@ Run from inside the catkin workspace (tracksprayrobot/robot):
 
 ```bash
 roslaunch bringup robot.launch
+```
+
+If no frontend is used and the whole robot should start immediately, run the
+helper script from the repository root:
+
+```bash
+./complete_robot_start.sh
+```
+
+This script cleans up old ROS processes, starts `pigpiod`, builds the catkin
+workspace, sources it, and launches `bringup robot.launch`.
+
+For the Raspberry Pi deployment flow, `roscore` and rosbridge are started by the
+systemd service in `deploy/rosbridge.service`. The frontend then starts the robot
+in two phases:
+
+```bash
+deploy/scripts/start_localization.sh
+deploy/scripts/start_navigation.sh
+```
+
+See `deploy/README.md` for the full Pi setup.
+
+### RTK/NTRIP credentials
+
+`localization.launch` loads local RTK credentials from
+`robot/src/localization/config/rtk_credentials.yaml`. Create it from the example:
+
+```bash
+cd robot
+cp src/localization/config/rtk_credentials.example.yaml \
+   src/localization/config/rtk_credentials.yaml
 ```
 
 ------------------------------------------------------------------------
@@ -145,43 +219,26 @@ roslaunch bringup robot.launch
     ├── README.md
     ├── .gitignore
     │
-    ├── realrobot/ros_drive              # final ROS Noetic Workspace
+    ├── robot/                          # current ROS Noetic catkin workspace
     │   ├── src/
-    │   │   ├── track_spray_robot/
-    │   │   │   ├── config/
-    │   │   │   ├── launch/
-    │   │   │   ├── scripts/
-    │   │   │   │   ├── gps/
+    │   │   ├── bringup/
+    │   │   ├── imu/
+    │   │   ├── localization/
+    │   │   ├── motor_control/
+    │   │   ├── navigation/
+    │   │   ├── robot_msgs/
+    │   │   ├── robot_web_bridge/
+    │   │   └── teleop/
     │
     ├── calculations/                   # Prototype-Calculations for navigation
     │
     ├── sensors/                        # Packages to test sensors individually
     │   ├── GPS_Sensor/
+    │   ├── IMU/
     │
-    ├── backend/                        # TO BE DONE
-    │   ├── api/
-    │   ├── websocket_server/
-    │   ├── robot_gateway/
-    │   └── data_models/
+    ├── deploy/                         # Raspberry Pi service and start scripts
     │
-    ├── frontend/                       # TO BE DONE
-    │   ├── web-app/
-    │   │   ├── components/
-    │   │   ├── map/
-    │   │   ├── services/
-    │   │   └── pages/
-    │   │
-    │   └── mobile-app/ (optional)
-    │
-    ├── shared/                         # TO BE DONE
-    │   ├── map_models/
-    │   └── communication_interfaces/
-    │
-    ├── docs/                           # TO BE DONE
-    │   ├── architecture/
-    │   ├── hardware/
-    │   ├── requirements/
-    │   └── diagrams/
+    ├── shared_files/                   # runtime exchange for frontend/robot data
     │
     └── simulations/                    # Robot simulations using Gazebo
         ├── ros_lidar_simulation/
@@ -189,38 +246,39 @@ roslaunch bringup robot.launch
         └── ros_lidar_simulation_Trackspray/
 
 
-
-In future extension, the different scripts might be divided into individual packages depending on their responsibility, e.g.
-
-    trackSprayRobot/
-    ├── robot/     
-    │   ├── src/
-    │   │   ├── hardware_interface/
-    │   │   ├── localization/
-    │   │   ├── path_planning/
-    │   │   ├── spray_controller/
-    │   │   ├── mission_manager/
-    │   │   └── status_monitor/
-
+The frontend repository can be found [here](https://github.com/davidhepp/tracksprayer).
 ------------------------------------------------------------------------
 
 # 📡 Communication Architecture
 
--   REST API for configuration
--   WebSocket for live updates
+-   rosbridge WebSocket on port `9090` for live ROS topic access
 -   ROS Noetic Topics/Services internally
--   JSON / Protobuf message formats (TBD)
+-   Shared files for mission inputs and spray-fill state:
+    -   `/home/ubuntu/trackSprayRobot/shared_files/waypoints.json`
+    -   `/home/ubuntu/trackSprayRobot/shared_files/obstacles.json`
+    -   `/home/ubuntu/trackSprayRobot/shared_files/dosenstand.txt`
+-   Frontend status topics:
+    -   `/robot_state` (`robot_msgs/RobotState`)
+    -   `/robot_status` (`robot_msgs/RobotStatus`)
+    -   `/emergency_reset` (`teleop/EmergencyReset`)
+
+Detailed rosbridge topic documentation is available in
+`robot/src/robot_web_bridge/doku.md`.
 
 ------------------------------------------------------------------------
 
 # 📊 Status Information Available to User
 
--   Current position
+-   Current GPS position (`gps/fix`)
+-   GPS/RTK quality (`gps/quality`)
+-   Estimated spray fill level (`shared_files/dosenstand.txt`)
+-   Mission state and waypoint progress (`/robot_state`)
+-   Error and warning states (`/robot_status`)
+-   Emergency reset command (`/emergency_reset`)
+
+Not implemented yet:
+
 -   Battery level
--   Estimated Spray fill level
--   Mission progress (%)
--   Current discipline
--   Error states
 
 ------------------------------------------------------------------------
 
@@ -234,7 +292,7 @@ In future extension, the different scripts might be divided into individual pack
 
 # 🚀 Optional / Future Features
 
--   Obstacle Detection via LiDAR
+-   Automatic obstacle detection via LiDAR (already simulated)
 -   Automatic discipline generator
 -   Track optimization algorithm
 

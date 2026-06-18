@@ -123,9 +123,3 @@ abonniert nur dieses eine Topic und filtert über `source` / `type` / `code`.
 |---|---|---|
 | `is_soft` | `bool` | `true` = Soft-Reset (nur Motortreiber neu); `false` = Hard-Kill aller Fahr-/Navigationsprozesse (localization + rosbridge bleiben am Leben) |
 
----
-
-
-## Will be there soon 
-- Battery Level
-- Spray Level 

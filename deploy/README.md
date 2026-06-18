@@ -26,15 +26,20 @@ alte Pfad einmalig als Lesefallback verwendet und danach in `shared_files` gesch
 cd ~/trackSprayRobot/robot
 catkin_make
 
-# 2. Skripte ausführbar machen
+# 2. RTK/NTRIP-Konfiguration lokal anlegen und ausfüllen
+cp src/localization/config/rtk_credentials.example.yaml \
+   src/localization/config/rtk_credentials.yaml
+nano src/localization/config/rtk_credentials.yaml
+
+# 3. Skripte ausführbar machen
 chmod +x ~/trackSprayRobot/deploy/scripts/start_localization.sh \
          ~/trackSprayRobot/deploy/scripts/start_navigation.sh \
          ~/trackSprayRobot/deploy/start_rosbridge.sh
 
-# 3. Verzeichnis für Frontend/Robot-Shared-State
+# 4. Verzeichnis für Frontend/Robot-Shared-State
 mkdir -p /home/ubuntu/trackSprayRobot/shared_files
 
-# 4. systemd-Service installieren (roscore + rosbridge ab Boot)
+# 5. systemd-Service installieren (roscore + rosbridge ab Boot)
 sudo cp ~/trackSprayRobot/deploy/rosbridge.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now rosbridge
