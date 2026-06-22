@@ -52,8 +52,8 @@ Roher GGA-Qualitätsindikator des GPS-Empfängers (ergänzend zu `gps/fix.status
 ---
 
 
-### `/robot_state`
-**Typ:** `robot_msgs/RobotState` · **Richtung:** Robot → Client
+### `/navigation_state`
+**Typ:** `robot_msgs/NavigationState` · **Richtung:** Robot → Client
 
 **Aktueller Navigations-Lebenszustand** (nicht zu verwechseln mit `/robot_status`, das
 diskrete Events/Fehler liefert). Publiziert bei **Zustandswechsel** und bei
@@ -142,4 +142,3 @@ abonniert nur dieses eine Topic und filtert über `source` / `type` / `code`.
 | Feld | Typ | Bedeutung |
 |---|---|---|
 | `is_soft` | `bool` | `true` = Soft-Reset (nur Motortreiber neu); `false` = Hard-Kill aller Fahr-/Navigationsprozesse (localization + rosbridge bleiben am Leben) |
-

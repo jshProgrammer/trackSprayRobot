@@ -12,7 +12,7 @@ abonniert nur dieses eine Topic und filtert über ``source`` / ``type`` / ``code
 """
 
 import rospy
-from robot_msgs.msg import RobotStatus, RobotState
+from robot_msgs.msg import NavigationState, RobotStatus
 
 # Flush-Zeit, damit ein latched publish einer gleich sterbenden Node noch rausgeht.
 _FATAL_FLUSH_SEC = 0.3
@@ -56,7 +56,7 @@ class StatusReporter:
 
 
 class StatePublisher:
-    """Publiziert den aktuellen Navigations-Lebenszustand auf ``/robot_state`` (latched).
+    """Publiziert den aktuellen Navigations-Lebenszustand auf ``/navigation_state`` (latched).
 
     Im Gegensatz zum ereignisbasierten StatusReporter beschreibt dies den
     *kontinuierlichen* Zustand. Dedup über (state, waypoint_index): ein neuer Zustand
@@ -65,15 +65,15 @@ class StatePublisher:
     """
 
     _NAMES = {
-        RobotState.STATE_IDLE: "IDLE",
-        RobotState.STATE_CALIBRATING: "CALIBRATING",
-        RobotState.STATE_NAVIGATING: "NAVIGATING",
-        RobotState.STATE_GOAL_REACHED: "GOAL_REACHED",
-        RobotState.STATE_PAUSED: "PAUSED",
+        NavigationState.STATE_IDLE: "IDLE",
+        NavigationState.STATE_CALIBRATING: "CALIBRATING",
+        NavigationState.STATE_NAVIGATING: "NAVIGATING",
+        NavigationState.STATE_GOAL_REACHED: "GOAL_REACHED",
+        NavigationState.STATE_PAUSED: "PAUSED",
     }
 
-    def __init__(self, topic="/robot_state"):
-        self.pub = rospy.Publisher(topic, RobotState, queue_size=10, latch=True)
+    def __init__(self, topic="/navigation_state"):
+        self.pub = rospy.Publisher(topic, NavigationState, queue_size=10, latch=True)
         self._last_key = None
 
     def publish(self, state, waypoint_index=0, waypoint_total=0,
@@ -82,7 +82,7 @@ class StatePublisher:
         if key == self._last_key:
             return
         self._last_key = key
-        self.pub.publish(RobotState(
+        self.pub.publish(NavigationState(
             stamp=rospy.Time.now(),
             state=state,
             state_name=self._NAMES.get(state, ""),

@@ -28,7 +28,7 @@ from std_msgs.msg import String, Empty, Bool
 
 from spray_counter import spray
 from robot_msgs.status import StatusReporter, StatePublisher
-from robot_msgs.msg import RobotState
+from robot_msgs.msg import NavigationState
 
 from navigation.geo import quaternion_to_yaw, normalize_angle, gps_to_xy
 from navigation.params import NavParams
@@ -106,7 +106,7 @@ class NavigationNode:
         self.rtk.set_status(self.status)
         self.state_pub = StatePublisher()
         # Startzustand sofort (latched) -> früh verbundenes Frontend sieht "IDLE".
-        self.state_pub.publish(RobotState.STATE_IDLE, waypoint_total=len(self.waypoints))
+        self.state_pub.publish(NavigationState.STATE_IDLE, waypoint_total=len(self.waypoints))
         self.motion = MotionController(self.p, self.logger)
         self.spray_pub = rospy.Publisher("/cmd_spray", Empty, queue_size=1)
         self.bypass_request_pub = rospy.Publisher('/obstacle_bypass_request', String, queue_size=1)
@@ -240,7 +240,7 @@ class NavigationNode:
 
         if previous_state == "CALIBRATING":
             self.nav_state = "WAITING_FOR_FIX"
-            self.state_pub.publish(RobotState.STATE_IDLE, waypoint_total=len(self.waypoints))
+            self.state_pub.publish(NavigationState.STATE_IDLE, waypoint_total=len(self.waypoints))
             message = "Navigation freigegeben – Kalibrierung wird von aktueller Position neu gestartet"
         else:
             self.nav_state = previous_state
@@ -248,7 +248,7 @@ class NavigationNode:
                 self._publish_navigating_state()
                 message = "Navigation freigegeben – aktueller Waypoint wird von neuer Position angefahren"
             else:
-                self.state_pub.publish(RobotState.STATE_IDLE, waypoint_total=len(self.waypoints))
+                self.state_pub.publish(NavigationState.STATE_IDLE, waypoint_total=len(self.waypoints))
                 message = "Navigation freigegeben"
 
         self.status.info("NAVIGATION_RESUMED", message, dedup=False)
@@ -256,12 +256,12 @@ class NavigationNode:
 
     def _publish_paused_state(self):
         if self.current_waypoint_index >= len(self.waypoints):
-            self.state_pub.publish(RobotState.STATE_PAUSED, waypoint_total=len(self.waypoints))
+            self.state_pub.publish(NavigationState.STATE_PAUSED, waypoint_total=len(self.waypoints))
             return
 
         goal_lat, goal_lon = self.waypoints[self.current_waypoint_index]
         self.state_pub.publish(
-            RobotState.STATE_PAUSED,
+            NavigationState.STATE_PAUSED,
             waypoint_index=self.current_waypoint_index + 1,
             waypoint_total=len(self.waypoints),
             target_lat=float(goal_lat),
@@ -295,7 +295,7 @@ class NavigationNode:
                 rospy.loginfo("Alle Waypoints erreicht! Roboter stoppt.")
                 self.at_goal = True
                 self.status.info("GOAL_REACHED", "Alle Waypoints erreicht – Roboter stoppt")
-                self.state_pub.publish(RobotState.STATE_GOAL_REACHED,
+                self.state_pub.publish(NavigationState.STATE_GOAL_REACHED,
                                        waypoint_total=len(self.waypoints))
             self.motion.stop()
             return False
@@ -309,7 +309,7 @@ class NavigationNode:
         """Records the calibration start position and transitions to CALIBRATING."""
         self.calib.start(cur_x, cur_y)
         self.nav_state = "CALIBRATING"
-        self.state_pub.publish(RobotState.STATE_CALIBRATING, waypoint_total=len(self.waypoints))
+        self.state_pub.publish(NavigationState.STATE_CALIBRATING, waypoint_total=len(self.waypoints))
         rospy.loginfo("Starte Auto-Kalibrierung: Fahre geradeaus, um den GPS-Vektor zu messen...")
 
     def _handle_calibrating(self, cur_x: float, cur_y: float):
@@ -333,7 +333,7 @@ class NavigationNode:
             return
         goal_lat, goal_lon = self.waypoints[self.current_waypoint_index]
         self.state_pub.publish(
-            RobotState.STATE_NAVIGATING,
+            NavigationState.STATE_NAVIGATING,
             waypoint_index=self.current_waypoint_index + 1,
             waypoint_total=len(self.waypoints),
             target_lat=float(goal_lat),

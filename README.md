@@ -124,7 +124,7 @@ robot/
     │   ├── config/
     │   ├── launch/
     │   ├── src/                  # Navigation nodes and helper modules
-    ├── robot_msgs/               # Custom RobotState and RobotStatus messages
+    ├── robot_msgs/               # Custom NavigationState and RobotStatus messages
     │   ├── msg/
     │   └── src/
     ├── robot_web_bridge/         # rosbridge launch and bridge documentation
@@ -258,7 +258,7 @@ The frontend repository can be found [here](https://github.com/davidhepp/tracksp
     -   `/home/ubuntu/trackSprayRobot/shared_files/obstacles.json`
     -   `/home/ubuntu/trackSprayRobot/shared_files/dosenstand.txt`
 -   Frontend status topics:
-    -   `/robot_state` (`robot_msgs/RobotState`)
+    -   `/navigation_state` (`robot_msgs/NavigationState`)
     -   `/robot_status` (`robot_msgs/RobotStatus`)
     -   `/emergency_reset` (`teleop/EmergencyReset`)
 
@@ -272,7 +272,7 @@ Detailed rosbridge topic documentation is available in
 -   Current GPS position (`gps/fix`)
 -   GPS/RTK quality (`gps/quality`)
 -   Estimated spray fill level (`shared_files/dosenstand.txt`)
--   Mission state and waypoint progress (`/robot_state`)
+-   Mission state and waypoint progress (`/navigation_state`)
 -   Error and warning states (`/robot_status`)
 -   Emergency reset command (`/emergency_reset`)
 
