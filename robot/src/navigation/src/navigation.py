@@ -20,6 +20,7 @@ import json
 import logging
 import math
 import os
+import threading
 
 import rospy
 from sensor_msgs.msg import Imu
@@ -94,6 +95,7 @@ class NavigationNode:
         # vorherigen Zustand in nav_state_before_pause.
         self.nav_state = "WAITING_FOR_FIX"
         self.nav_state_before_pause = None
+        self._state_lock = threading.RLock()
 
         # ── Module mit eigenem State ─────────────────────────────────────
         self.rtk = RTKTracker(self.p, None, self.logger)   # status wird in _init_ros gesetzt
@@ -161,40 +163,42 @@ class NavigationNode:
             rospy.loginfo(f"IMU aktiv. Erster roher Heading: {math.degrees(self.heading):.1f}°")
 
     def _pause_callback(self, msg: Bool):
-        if msg.data:
-            self._enter_paused()
-        else:
-            self._resume_from_pause()
+        with self._state_lock:
+            if msg.data:
+                self._enter_paused()
+            else:
+                self._resume_from_pause()
 
     # ════════════════════════════════════════════════════════════════════
     # HAUPTREGELSCHLEIFE (100 Hz)
     # ════════════════════════════════════════════════════════════════════
     def _control_loop(self, event):
-        if self.nav_state == "PAUSED":
-            # User-Pause: Navigation gibt den Fahrkanal frei, damit der Controller
-            # manuell auf /cmd_vel_controll steuern kann.
-            return
-
-        # Non-blocking Pause nach dem Sprühen (ersetzt das blockierende time.sleep,
-        # das zuvor den 100-Hz-Timer-Thread einfror).
-        if self.pause_until is not None:
-            if rospy.Time.now() < self.pause_until:
-                self.motion.stop()
+        with self._state_lock:
+            if self.nav_state == "PAUSED":
+                # User-Pause: Navigation gibt den Fahrkanal frei, damit der Controller
+                # manuell auf /cmd_vel_controll steuern kann.
                 return
-            self.pause_until = None
 
-        if not self._preconditions_met():
-            return
+            # Non-blocking Pause nach dem Sprühen (ersetzt das blockierende time.sleep,
+            # das zuvor den 100-Hz-Timer-Thread einfror).
+            if self.pause_until is not None:
+                if rospy.Time.now() < self.pause_until:
+                    self.motion.stop()
+                    return
+                self.pause_until = None
 
-        cur_x, cur_y = gps_to_xy(self.rtk.current_lat, self.rtk.current_lon,
-                                 self.rtk.origin_lat, self.rtk.origin_lon)
+            if not self._preconditions_met():
+                return
 
-        if self.nav_state == "WAITING_FOR_FIX":
-            self._initialize_calibration_state(cur_x, cur_y)
-        elif self.nav_state == "CALIBRATING":
-            self._handle_calibrating(cur_x, cur_y)
-        elif self.nav_state == "NAVIGATING":
-            self._handle_navigating(cur_x, cur_y)
+            cur_x, cur_y = gps_to_xy(self.rtk.current_lat, self.rtk.current_lon,
+                                     self.rtk.origin_lat, self.rtk.origin_lon)
+
+            if self.nav_state == "WAITING_FOR_FIX":
+                self._initialize_calibration_state(cur_x, cur_y)
+            elif self.nav_state == "CALIBRATING":
+                self._handle_calibrating(cur_x, cur_y)
+            elif self.nav_state == "NAVIGATING":
+                self._handle_navigating(cur_x, cur_y)
 
     def _enter_paused(self):
         if self.nav_state == "PAUSED":
