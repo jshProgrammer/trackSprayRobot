@@ -69,6 +69,7 @@ class StatePublisher:
         RobotState.STATE_CALIBRATING: "CALIBRATING",
         RobotState.STATE_NAVIGATING: "NAVIGATING",
         RobotState.STATE_GOAL_REACHED: "GOAL_REACHED",
+        RobotState.STATE_PAUSED: "PAUSED",
     }
 
     def __init__(self, topic="/robot_state"):
