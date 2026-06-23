@@ -66,8 +66,12 @@ class MotorDriver:
     def _motor_pins(self):
         return (
             self.pin_left,
-            self.pin_left_reverse,
             self.pin_right,
+        )
+
+    def _reverse_pins(self):
+        return (
+            self.pin_left_reverse,
             self.pin_right_reverse,
         )
 
@@ -91,20 +95,28 @@ class MotorDriver:
                 self.pi.set_mode(gpio, pigpio.OUTPUT)
                 self.pi.write(gpio, 0)
 
-    def _set_bidirectional_motor(self, forward_pin, reverse_pin, speed: float, reversed_motor: bool):
-        if reversed_motor:
-            speed = -speed
+        for gpio in self._reverse_pins():
+            self.pi.set_mode(gpio, pigpio.OUTPUT)
+            self.pi.write(gpio, 0)
 
-        if abs(speed) < 0.001:
-            self._write_pwm(forward_pin, 0)
-            self._write_pwm(reverse_pin, 0)
+    def _set_reverse_pin(self, gpio, enabled: bool):
+        self.pi.set_mode(gpio, pigpio.OUTPUT)
+        self.pi.write(gpio, 1 if enabled else 0)
+
+    def _set_bidirectional_motor(self, pwm_pin, reverse_pin, speed: float, reversed_motor: bool):
+        duty = abs(speed)
+
+        reverse_enabled = speed < 0
+        if reversed_motor:
+            reverse_enabled = not reverse_enabled
+
+        self._set_reverse_pin(reverse_pin, reverse_enabled)
+
+        if duty < 0.001:
+            self._write_pwm(pwm_pin, 0)
             return
 
-        active_pin = forward_pin if speed > 0 else reverse_pin
-        inactive_pin = reverse_pin if speed > 0 else forward_pin
-
-        self._write_pwm(inactive_pin, 0)
-        self._write_pwm(active_pin, abs(speed))
+        self._write_pwm(pwm_pin, duty)
 
     def set_motor_left(self, speed: float):
         self._set_bidirectional_motor(
