@@ -2,12 +2,12 @@ motor_driver:
   # =========================
   # GPIO PINS
   # =========================
-  pin_left: 18  # PIN 12
-  pin_left_reverse: 27
-  left_motor_reversed: true
-  pin_right: 13 # PIN 33
-  pin_right_reverse: 17
-  right_motor_reversed: false
+  pin_right: 18  # PIN 12
+  pin_right_reverse: 27
+  right_motor_reversed: true
+  pin_left: 13 # PIN 33
+  pin_left_reverse: 17
+  left_motor_reversed: false
   pin_spray: 12 # PIN 32
 
   # =========================
