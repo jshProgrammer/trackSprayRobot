@@ -36,6 +36,7 @@ class MotorDriver:
             rospy.get_param("/motor_driver/encoder_left_c"),
         )
         self.encoder_pull_up = rospy.get_param("/motor_driver/encoder_pull_up", True)
+        self.encoder_publish_rate = max(rospy.get_param("/motor_driver/encoder_publish_rate", 5.0), 0.1)
 
         self.pwm_stop    = rospy.get_param("/motor_driver/pwm_stop")
         self.pwm_max_fwd = rospy.get_param("/motor_driver/pwm_max_fwd")
@@ -64,8 +65,18 @@ class MotorDriver:
         # =========================
         # ROS NODE
         # =========================
-        self.encoder_pub = rospy.Publisher("/encoder_states", Int32MultiArray, queue_size=1)
-        self.encoder_timer = rospy.Timer(rospy.Duration(0.2), self.encoder_callback)
+        self.encoder_latest = []
+        self.encoder_pub = rospy.Publisher(
+            "/encoder_states",
+            Int32MultiArray,
+            queue_size=1,
+            latch=True,
+        )
+        self.encoder_callback(None)
+        self.encoder_timer = rospy.Timer(
+            rospy.Duration(1.0 / self.encoder_publish_rate),
+            self.encoder_callback,
+        )
         rospy.Subscriber("/cmd_vel", Twist, self.cmd_callback, queue_size=1)
         rospy.Subscriber("/cmd_spray", Empty, self.spray_callback, queue_size=1)
         rospy.on_shutdown(self.shutdown)
@@ -148,10 +159,12 @@ class MotorDriver:
 
     def encoder_callback(self, event):
         right, left = self._read_encoders()
+        self.encoder_latest = right + left
         msg = Int32MultiArray()
-        msg.data = right + left
+        msg.data = self.encoder_latest
         self.encoder_pub.publish(msg)
-        rospy.loginfo(
+        rospy.loginfo_throttle(
+            1,
             "ENCODER right=[%d,%d,%d] left=[%d,%d,%d]",
             right[0], right[1], right[2],
             left[0], left[1], left[2],
