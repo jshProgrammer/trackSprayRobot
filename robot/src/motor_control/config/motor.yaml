@@ -10,6 +10,13 @@ motor_driver:
   left_motor_reversed: false
   pin_spray: 12 # PIN 32
 
+  encoder_right_a: 26
+  encoder_right_b: 6
+  encoder_right_c: 5
+  encoder_left_a: 16
+  encoder_left_b: 23
+  encoder_left_c: 24
+
   # =========================
   # ESC PWM SETTINGS (µs)
   # =========================
