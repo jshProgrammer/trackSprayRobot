@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 import rospy
 from geometry_msgs.msg import Twist
-from std_msgs.msg import Empty
+from std_msgs.msg import Empty, Int32MultiArray
 import time
+import threading
 import pigpio
 from robot_msgs.status import StatusReporter
 
@@ -25,6 +26,19 @@ class MotorDriver:
         self.pin_right_reverse = rospy.get_param("/motor_driver/pin_right_reverse")
         self.right_motor_reversed = rospy.get_param("/motor_driver/right_motor_reversed", False)
         self.pin_spray = rospy.get_param("/motor_driver/pin_spray")
+        self.encoder_right_pins = (
+            rospy.get_param("/motor_driver/encoder_right_a"),
+            rospy.get_param("/motor_driver/encoder_right_b"),
+            rospy.get_param("/motor_driver/encoder_right_c"),
+        )
+        self.encoder_left_pins = (
+            rospy.get_param("/motor_driver/encoder_left_a"),
+            rospy.get_param("/motor_driver/encoder_left_b"),
+            rospy.get_param("/motor_driver/encoder_left_c"),
+        )
+        self.encoder_pull_up = rospy.get_param("/motor_driver/encoder_pull_up", True)
+        self.encoder_event_driven = rospy.get_param("/motor_driver/encoder_event_driven", True)
+        self.encoder_publish_rate = max(rospy.get_param("/motor_driver/encoder_publish_rate", 5.0), 0.1)
 
         self.pwm_stop    = rospy.get_param("/motor_driver/pwm_stop")
         self.pwm_max_fwd = rospy.get_param("/motor_driver/pwm_max_fwd")
@@ -47,11 +61,30 @@ class MotorDriver:
             raise RuntimeError("pigpio daemon not running -> sudo pigpiod")
         
         self._stop_motors(reset_modes=True)
+        self._setup_encoders()
         self.pi.set_servo_pulsewidth(self.pin_spray, 0)
         
         # =========================
         # ROS NODE
         # =========================
+        self.encoder_latest = []
+        self.encoder_lock = threading.Lock()
+        self.encoder_callbacks = []
+        self.encoder_pub = rospy.Publisher(
+            "/encoder_states",
+            Int32MultiArray,
+            queue_size=1,
+            latch=True,
+        )
+        self.encoder_timer = None
+        self._publish_encoder_state(force=True)
+        if self.encoder_event_driven:
+            self._setup_encoder_callbacks()
+        else:
+            self.encoder_timer = rospy.Timer(
+                rospy.Duration(1.0 / self.encoder_publish_rate),
+                self.encoder_callback,
+            )
         rospy.Subscriber("/cmd_vel", Twist, self.cmd_callback, queue_size=1)
         rospy.Subscriber("/cmd_spray", Empty, self.spray_callback, queue_size=1)
         rospy.on_shutdown(self.shutdown)
@@ -117,6 +150,58 @@ class MotorDriver:
             return
 
         self._write_pwm(pwm_pin, duty)
+
+    def _encoder_pins(self):
+        return self.encoder_right_pins + self.encoder_left_pins
+
+    def _setup_encoders(self):
+        pull_mode = pigpio.PUD_UP if self.encoder_pull_up else pigpio.PUD_OFF
+        for gpio in self._encoder_pins():
+            self.pi.set_mode(gpio, pigpio.INPUT)
+            self.pi.set_pull_up_down(gpio, pull_mode)
+
+    def _read_encoders(self):
+        right = [self.pi.read(gpio) for gpio in self.encoder_right_pins]
+        left = [self.pi.read(gpio) for gpio in self.encoder_left_pins]
+        return right, left
+
+    def _setup_encoder_callbacks(self):
+        for gpio in self._encoder_pins():
+            self.encoder_callbacks.append(
+                self.pi.callback(gpio, pigpio.EITHER_EDGE, self.encoder_edge_callback)
+            )
+
+    def _cancel_encoder_callbacks(self):
+        for callback in self.encoder_callbacks:
+            callback.cancel()
+        self.encoder_callbacks = []
+
+    def _publish_encoder_state(self, force=False):
+        right, left = self._read_encoders()
+        encoder_state = right + left
+
+        with self.encoder_lock:
+            if not force and encoder_state == self.encoder_latest:
+                return
+            self.encoder_latest = encoder_state
+
+        msg = Int32MultiArray()
+        msg.data = encoder_state
+        self.encoder_pub.publish(msg)
+        rospy.loginfo_throttle(
+            1,
+            "ENCODER right=[%d,%d,%d] left=[%d,%d,%d]",
+            right[0], right[1], right[2],
+            left[0], left[1], left[2],
+        )
+
+    def encoder_callback(self, event):
+        self._publish_encoder_state(force=True)
+
+    def encoder_edge_callback(self, gpio, level, tick):
+        if level == pigpio.TIMEOUT:
+            return
+        self._publish_encoder_state()
 
     def set_motor_left(self, speed: float):
         self._set_bidirectional_motor(
@@ -247,6 +332,9 @@ class MotorDriver:
         #self.pi.set_servo_pulsewidth(self.pin_right, self.pwm_stop)
 
         try:
+            if self.encoder_timer is not None:
+                self.encoder_timer.shutdown()
+            self._cancel_encoder_callbacks()
             self._stop_motors(reset_modes=True)
             self.pi.set_servo_pulsewidth(self.pin_spray, 0)
         finally:
