@@ -16,6 +16,7 @@ motor_driver:
   encoder_left_a: 16
   encoder_left_b: 23
   encoder_left_c: 24
+  encoder_pull_up: false
 
   # =========================
   # ESC PWM SETTINGS (µs)
