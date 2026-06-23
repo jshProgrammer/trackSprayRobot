@@ -7,6 +7,7 @@ import pigpio
 from robot_msgs.status import StatusReporter
 
 class MotorDriver:
+    HARDWARE_PWM_GPIOS = {12, 13, 18, 19}
 
     def __init__(self):
 
@@ -18,7 +19,11 @@ class MotorDriver:
         # PARAMETER LOAD
         # =========================
         self.pin_left  = rospy.get_param("/motor_driver/pin_left")
+        self.pin_left_reverse = rospy.get_param("/motor_driver/pin_left_reverse")
+        self.left_motor_reversed = rospy.get_param("/motor_driver/left_motor_reversed", True)
         self.pin_right = rospy.get_param("/motor_driver/pin_right")
+        self.pin_right_reverse = rospy.get_param("/motor_driver/pin_right_reverse")
+        self.right_motor_reversed = rospy.get_param("/motor_driver/right_motor_reversed", False)
         self.pin_spray = rospy.get_param("/motor_driver/pin_spray")
 
         self.pwm_stop    = rospy.get_param("/motor_driver/pwm_stop")
@@ -41,8 +46,7 @@ class MotorDriver:
                                      "pigpio-Daemon läuft nicht – Roboter kann nicht fahren")
             raise RuntimeError("pigpio daemon not running -> sudo pigpiod")
         
-        self.pi.hardware_PWM(self.pin_right, self.motor_frequency, 0)
-        self.pi.hardware_PWM(self.pin_left, self.motor_frequency, 0)
+        self._stop_motors(reset_modes=True)
         self.pi.set_servo_pulsewidth(self.pin_spray, 0)
         
         # =========================
@@ -59,16 +63,64 @@ class MotorDriver:
     # =========================
     # MOTOR OUTPUT
     # =========================
+    def _motor_pins(self):
+        return (
+            self.pin_left,
+            self.pin_left_reverse,
+            self.pin_right,
+            self.pin_right_reverse,
+        )
+
+    def _write_pwm(self, gpio, speed: float):
+        speed = max(0.0, min(1.0, speed))
+
+        if gpio in self.HARDWARE_PWM_GPIOS:
+            pulse = int(1000000 * speed)
+            self.pi.hardware_PWM(gpio, self.motor_frequency, pulse)
+            return
+
+        self.pi.set_mode(gpio, pigpio.OUTPUT)
+        self.pi.set_PWM_frequency(gpio, self.motor_frequency)
+        self.pi.set_PWM_range(gpio, 255)
+        self.pi.set_PWM_dutycycle(gpio, int(255 * speed))
+
+    def _stop_motors(self, reset_modes=False):
+        for gpio in self._motor_pins():
+            self._write_pwm(gpio, 0)
+            if reset_modes:
+                self.pi.set_mode(gpio, pigpio.OUTPUT)
+                self.pi.write(gpio, 0)
+
+    def _set_bidirectional_motor(self, forward_pin, reverse_pin, speed: float, reversed_motor: bool):
+        if reversed_motor:
+            speed = -speed
+
+        if abs(speed) < 0.001:
+            self._write_pwm(forward_pin, 0)
+            self._write_pwm(reverse_pin, 0)
+            return
+
+        active_pin = forward_pin if speed > 0 else reverse_pin
+        inactive_pin = reverse_pin if speed > 0 else forward_pin
+
+        self._write_pwm(inactive_pin, 0)
+        self._write_pwm(active_pin, abs(speed))
+
     def set_motor_left(self, speed: float):
-        pulse = int(1000000 * speed)    # 1kHz - 20 kHz
-
-        self.pi.hardware_PWM(self.pin_left, self.motor_frequency, pulse)
-
+        self._set_bidirectional_motor(
+            self.pin_left,
+            self.pin_left_reverse,
+            speed,
+            self.left_motor_reversed,
+        )
 
     def set_motor_right(self, speed: float):
-        pulse = int(1000000 * speed)
-
-        self.pi.hardware_PWM(self.pin_right, self.motor_frequency, pulse)
+        self._set_bidirectional_motor(
+            self.pin_right,
+            self.pin_right_reverse,
+            speed,
+            self.right_motor_reversed,
+        )
 
     def set_servo_angle(self, angle):
         angle = max(0, min(270, angle))
@@ -182,12 +234,11 @@ class MotorDriver:
         #self.pi.set_servo_pulsewidth(self.pin_left, self.pwm_stop)
         #self.pi.set_servo_pulsewidth(self.pin_right, self.pwm_stop)
 
-        # PWM off
-        self.pi.hardware_PWM(self.pin_left, self.motor_frequency, 0)
-        self.pi.hardware_PWM(self.pin_right, self.motor_frequency, 0)
-        self.pi.set_servo_pulsewidth(self.pin_spray, 0)
-
-        self.pi.stop()
+        try:
+            self._stop_motors(reset_modes=True)
+            self.pi.set_servo_pulsewidth(self.pin_spray, 0)
+        finally:
+            self.pi.stop()
 
 if __name__ == "__main__":
     rospy.init_node("motor_driver")
