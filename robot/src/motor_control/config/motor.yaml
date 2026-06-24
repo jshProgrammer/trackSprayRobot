@@ -27,7 +27,7 @@ motor_driver:
   encoder_motor_to_wheel_ratio: 1.0
   encoder_velocity_publish_rate: 20.0
   encoder_velocity_timeout: 0.25
-  encoder_velocity_variance: 0.04
+  encoder_velocity_max_abs: 0.225
   use_encoder_velocity: true
 
   # =========================
