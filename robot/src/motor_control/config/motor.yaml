@@ -27,7 +27,8 @@ motor_driver:
   encoder_motor_to_wheel_ratio: 1.0
   encoder_velocity_publish_rate: 20.0
   encoder_velocity_timeout: 0.25
-  encoder_velocity_max_abs: 0.225
+  # Harte Plausibilitätsgrenze für Encoder-m/s, nicht die Fahr-Sollgeschwindigkeit.
+  encoder_velocity_max_abs: 1.0
   use_encoder_velocity: true
 
   # =========================

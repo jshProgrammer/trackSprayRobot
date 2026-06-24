@@ -30,15 +30,15 @@ class EKFNoeticNode:
         self._rtk_status = RTKStatus.NO_FIX
         self.gps_quality = 0  # from /gps/quality topic from gps_node
 
-        # ── EKF-Zustand: [x, y, θ, v] ──────────────────────────────────
-        self.x = np.zeros((4, 1))
-        self.P = np.diag([1.0, 1.0, 0.1, 0.5])
+        # ── EKF-Zustand: [x, y, θ] ─────────────────────────────────────
+        self.x = np.zeros((3, 1))
+        self.P = np.diag([1.0, 1.0, 0.1])
         self._state_lock = threading.RLock()
         self._encoder_lock = threading.Lock()
 
         # Q (Prozessrauschen) bei Schlupf höher angesetzt, damit der Filter
         # bei durchdrehenden Rädern primär den realen Messungen vertraut.
-        self.Q = np.diag([0.06, 0.06, 0.02, 0.06])
+        self.Q = np.diag([0.06, 0.06, 0.02])
 
         # Messrauschen für GPS (RTK-Zustände)
         self.R_gps = {
@@ -47,15 +47,19 @@ class EKFNoeticNode:
         }
 
         # Da wir kein absolutes Yaw-Update mehr fahren, benötigen wir nur die GPS-Messmatrix
-        self.H_gps = np.array([[1, 0, 0, 0], [0, 1, 0, 0]])
+        self.H_gps = np.array([[1, 0, 0], [0, 1, 0]])
         self.use_encoder_velocity = rospy.get_param("/motor_driver/use_encoder_velocity", True)
         self.encoder_velocity_timeout = rospy.Duration(
             max(rospy.get_param("/motor_driver/encoder_velocity_timeout", 0.25), 0.01)
         )
+        default_encoder_velocity_max_abs = max(
+            rospy.get_param("/motor_driver/max_linear", 0.15) * 4.0,
+            0.5,
+        )
         self.encoder_velocity_max_abs = max(
             rospy.get_param(
                 "/motor_driver/encoder_velocity_max_abs",
-                rospy.get_param("/motor_driver/max_linear", 0.15) * 1.5,
+                default_encoder_velocity_max_abs,
             ),
             0.01,
         )
@@ -263,19 +267,17 @@ class EKFNoeticNode:
 
     def _ekf_predict(self, v, w, dt):
         with self._state_lock:
-            px, py, th, _ = self.x.flatten()
+            px, py, th = self.x.flatten()
             # v ist hier die gewählte Eingangsgeschwindigkeit: Encoder, falls frisch, sonst Kommando.
             self.x = np.array([
                 [px + v * math.cos(th) * dt],
                 [py + v * math.sin(th) * dt],
                 [self._wrap(th + w * dt)],
-                [v],
             ])
             F = np.array([
-                [1, 0, -v * math.sin(th) * dt,  math.cos(th) * dt],
-                [0, 1,  v * math.cos(th) * dt,  math.sin(th) * dt],
-                [0, 0,  1,                      0],
-                [0, 0,  0,                      1],
+                [1, 0, -v * math.sin(th) * dt],
+                [0, 1,  v * math.cos(th) * dt],
+                [0, 0,  1],
             ])
             self.P = F @ self.P @ F.T + self.Q
 
@@ -288,7 +290,7 @@ class EKFNoeticNode:
             K = self.P @ H.T @ np.linalg.inv(S)
             self.x = self.x + K @ innovation
             self.x[2, 0] = self._wrap(self.x[2, 0])
-            self.P = (np.eye(4) - K @ H) @ self.P
+            self.P = (np.eye(3) - K @ H) @ self.P
 
     # ══════════════════════════════════════════════════════════════════
     # REGLER-SCHLEIFE (20 Hz Taktung)
