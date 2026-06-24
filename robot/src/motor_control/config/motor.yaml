@@ -17,6 +17,18 @@ motor_driver:
   encoder_left_a: 16
   encoder_left_b: 23
   encoder_left_c: 24
+  encoder_hall_sequence: ["001", "101", "100", "110", "010", "011"]
+  encoder_right_reversed: true
+  encoder_left_reversed: false
+
+  # TODO: reale Werte eintragen, bevor /wheel/twist im Kalman-Filter genutzt wird.
+  wheel_radius: 0.1
+  encoder_ticks_per_motor_revolution: 0
+  encoder_motor_to_wheel_ratio: 1.0
+  encoder_velocity_publish_rate: 20.0
+  encoder_velocity_timeout: 0.25
+  encoder_velocity_variance: 0.04
+  use_encoder_velocity: true
 
   # =========================
   # ESC PWM SETTINGS (µs)

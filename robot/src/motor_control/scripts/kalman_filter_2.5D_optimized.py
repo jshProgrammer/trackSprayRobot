@@ -11,7 +11,7 @@ Optimiert für: Geradeausfahrt trotz Schlupf, Matsch und Bodenunebenheiten.
 import rospy
 import numpy as np
 import math
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import Twist, TwistStamped
 from sensor_msgs.msg import Imu, NavSatFix
 from std_msgs.msg import UInt8
 class RTKStatus:
@@ -45,6 +45,14 @@ class EKFNoeticNode:
 
         # Da wir kein absolutes Yaw-Update mehr fahren, benötigen wir nur die GPS-Messmatrix
         self.H_gps = np.array([[1, 0, 0, 0], [0, 1, 0, 0]])
+        self.H_encoder_v = np.array([[0, 0, 0, 1]])
+        self.R_encoder_v = np.array([[
+            max(rospy.get_param("/motor_driver/encoder_velocity_variance", 0.04), 0.0001)
+        ]])
+        self.use_encoder_velocity = rospy.get_param("/motor_driver/use_encoder_velocity", True)
+        self.encoder_velocity_timeout = rospy.Duration(
+            max(rospy.get_param("/motor_driver/encoder_velocity_timeout", 0.25), 0.01)
+        )
 
         # ── Regler & Spur-Parameter ───────────────────────────────────
         self.linear_speed = 0.0
@@ -70,12 +78,15 @@ class EKFNoeticNode:
         self.antenna_height =0.26 #0.26 # GPS-Antennenhöhe in Metern
         self.roll = 0.0
         self.pitch = 0.0
+        self.encoder_linear_speed = None
+        self.last_encoder_time = None
 
         # ── ROS Schnittstellen ──────────────────────────────────────────
         rospy.Subscriber('/imu/data', Imu, self.imu_callback)
         rospy.Subscriber('/gps/fix', NavSatFix, self.gps_callback)
         rospy.Subscriber('/gps/quality', UInt8, self._gps_quality_callback)
         rospy.Subscriber('/cmd_vel_controll', Twist, self.cmd_vel_callback)
+        rospy.Subscriber('/wheel/twist', TwistStamped, self.encoder_twist_callback)
 
         self.cmd_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
 
@@ -136,6 +147,37 @@ class EKFNoeticNode:
         #self.linear_speed = msg.linear.x
         #self.is_moving = abs(msg.linear.x) > 0.01
        
+    def encoder_twist_callback(self, msg: TwistStamped):
+        if not self.use_encoder_velocity:
+            return
+
+        measured_speed = msg.twist.linear.x
+        if not math.isfinite(measured_speed):
+            return
+
+        stamp = msg.header.stamp
+        if stamp == rospy.Time(0):
+            stamp = rospy.Time.now()
+
+        self.encoder_linear_speed = measured_speed
+        self.last_encoder_time = stamp
+        self._ekf_update(
+            z=np.array([[measured_speed]]),
+            H=self.H_encoder_v,
+            R=self.R_encoder_v,
+        )
+
+    def _encoder_speed_is_fresh(self, now):
+        if self.encoder_linear_speed is None or self.last_encoder_time is None:
+            return False
+        age = (now - self.last_encoder_time).to_sec()
+        return -0.05 <= age <= self.encoder_velocity_timeout.to_sec()
+
+    def _prediction_speed(self, now):
+        if self.use_encoder_velocity and self._encoder_speed_is_fresh(now):
+            return self.encoder_linear_speed
+        return self.linear_speed
+
 
     def imu_callback(self, msg: Imu):
         """
@@ -237,7 +279,7 @@ class EKFNoeticNode:
         if dt <= 0: return
 
         # 1. EKF-Schritt: Zustand mit real vergangenem dt prädizieren
-        self._ekf_predict(v=self.linear_speed, w=self.imu_w, dt=dt)
+        self._ekf_predict(v=self._prediction_speed(now), w=self.imu_w, dt=dt)
         """
         cmd = Twist()
         if self.is_moving:
