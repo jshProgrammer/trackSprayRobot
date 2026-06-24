@@ -9,6 +9,7 @@ motor_driver:
   pin_left_reverse: 17
   left_motor_reversed: false
   pin_spray: 12 # PIN 32
+  hardware_pwm_gpios: [12, 13, 18, 19]
 
   encoder_right_a: 26
   encoder_right_b: 6
@@ -16,9 +17,6 @@ motor_driver:
   encoder_left_a: 16
   encoder_left_b: 23
   encoder_left_c: 24
-  encoder_pull_up: false
-  encoder_event_driven: true
-  encoder_publish_rate: 5.0
 
   # =========================
   # ESC PWM SETTINGS (µs)
@@ -33,7 +31,7 @@ motor_driver:
   # =========================
   # DRIVE LIMITS
   # =========================
-  max_linear: 0.5      # m/s
+  max_linear: 0.15      # m/s
   max_angular: 0.4     # rad/s
 
   # =========================

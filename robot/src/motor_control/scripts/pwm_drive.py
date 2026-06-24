@@ -8,8 +8,6 @@ import pigpio
 from robot_msgs.status import StatusReporter
 
 class MotorDriver:
-    HARDWARE_PWM_GPIOS = {12, 13, 18, 19}
-
     def __init__(self):
 
         # Status-Reporter zuerst, damit auch frühe Fehler ans Frontend gehen.
@@ -36,9 +34,7 @@ class MotorDriver:
             rospy.get_param("/motor_driver/encoder_left_b"),
             rospy.get_param("/motor_driver/encoder_left_c"),
         )
-        self.encoder_pull_up = rospy.get_param("/motor_driver/encoder_pull_up", True)
-        self.encoder_event_driven = rospy.get_param("/motor_driver/encoder_event_driven", True)
-        self.encoder_publish_rate = max(rospy.get_param("/motor_driver/encoder_publish_rate", 5.0), 0.1)
+        self.hardware_pwm_gpios = set(rospy.get_param("/motor_driver/hardware_pwm_gpios"))
 
         self.pwm_stop    = rospy.get_param("/motor_driver/pwm_stop")
         self.pwm_max_fwd = rospy.get_param("/motor_driver/pwm_max_fwd")
@@ -76,15 +72,8 @@ class MotorDriver:
             queue_size=1,
             latch=True,
         )
-        self.encoder_timer = None
         self._publish_encoder_state(force=True)
-        if self.encoder_event_driven:
-            self._setup_encoder_callbacks()
-        else:
-            self.encoder_timer = rospy.Timer(
-                rospy.Duration(1.0 / self.encoder_publish_rate),
-                self.encoder_callback,
-            )
+        self._setup_encoder_callbacks()
         rospy.Subscriber("/cmd_vel", Twist, self.cmd_callback, queue_size=1)
         rospy.Subscriber("/cmd_spray", Empty, self.spray_callback, queue_size=1)
         rospy.on_shutdown(self.shutdown)
@@ -111,7 +100,7 @@ class MotorDriver:
     def _write_pwm(self, gpio, speed: float):
         speed = max(0.0, min(1.0, speed))
 
-        if gpio in self.HARDWARE_PWM_GPIOS:
+        if gpio in self.hardware_pwm_gpios:
             pulse = int(1000000 * speed)
             self.pi.hardware_PWM(gpio, self.motor_frequency, pulse)
             return
@@ -155,10 +144,9 @@ class MotorDriver:
         return self.encoder_right_pins + self.encoder_left_pins
 
     def _setup_encoders(self):
-        pull_mode = pigpio.PUD_UP if self.encoder_pull_up else pigpio.PUD_OFF
         for gpio in self._encoder_pins():
             self.pi.set_mode(gpio, pigpio.INPUT)
-            self.pi.set_pull_up_down(gpio, pull_mode)
+            self.pi.set_pull_up_down(gpio, pigpio.PUD_OFF)
 
     def _read_encoders(self):
         right = [self.pi.read(gpio) for gpio in self.encoder_right_pins]
@@ -194,9 +182,6 @@ class MotorDriver:
             right[0], right[1], right[2],
             left[0], left[1], left[2],
         )
-
-    def encoder_callback(self, event):
-        self._publish_encoder_state(force=True)
 
     def encoder_edge_callback(self, gpio, level, tick):
         if level == pigpio.TIMEOUT:
@@ -241,34 +226,14 @@ class MotorDriver:
     # =========================
     # CMD_VEL CALLBACK
     # =========================
-    
-    """
-    def cmd_callback(self, msg: Twist):
-        linear = max(min(msg.linear.x / self.max_linear, self.max_linear), 0)
-        angular = max(min(msg.angular.z / self.max_angular, self.max_angular), 
-                    -self.max_angular)
-
-        left_speed = linear - (angular * self.wheel_base / 2)
-        right_speed = linear + (angular * self.wheel_base / 2)
-
-        left_speed  = max(0.0, min(1.0, left_speed))
-        right_speed = max(0.0, min(1.0, right_speed))
-
-        rospy.logdebug(f"Left speed: {left_speed:.2f}, Right speed: {right_speed:.2f}")
-
-        #TODO: remove hardcoded scale factor
-        self.set_motor_left(left_speed)
-        self.set_motor_right(right_speed)
-    """
-
     def cmd_callback(self, msg: Twist):
         # 1. Mathematisch saubere Skalierung
         linear  = max(min(msg.linear.x  / self.max_linear,  1.0), 0.0)
         angular = max(min(msg.angular.z / self.max_angular,  1.0), -1.0)
 
         # 2. Saubere Kurvenberechnung (Verhältnis bleibt intakt!)
-        left_speed  = 0.3 #linear - (angular * self.wheel_base / 2)
-        right_speed = 0.3 #linear + (angular * self.wheel_base / 2)
+        left_speed  = linear - (angular * self.wheel_base / 2)
+        right_speed = linear + (angular * self.wheel_base / 2)
 
         """
         rospy.loginfo_throttle(
@@ -283,7 +248,7 @@ class MotorDriver:
         # 3. DIE SICHERHEITS-LEINE (Hardware-Deckel)
         # Anstatt 1.0 (100% Vollgas) begrenzen wir die Motoren hier hart auf z.B. 0.3 (30% Leistung).
         # Er kann jetzt physisch nicht schneller als 30% fahren, egal was das Gehirn befiehlt!
-        MAX_SAFE_PWM = 0.3 # <-- Hier könnt ihr auf dem Feld hochgehen, wenn er gut fährt (z.B. 0.5)
+        MAX_SAFE_PWM = 0.15 # <-- Hier könnt ihr auf dem Feld hochgehen, wenn er gut fährt (z.B. 0.5)
 
         max_speed = max(abs(left_speed), abs(right_speed))
 
@@ -301,25 +266,6 @@ class MotorDriver:
 
         self.set_motor_left(left_speed)
         self.set_motor_right(right_speed)
-    """
-
-    def cmd_callback(self, msg: Twist):
-        rospy.loginfo(f"CMD: linear={msg.linear.x:.3f}, angular={msg.angular.z:.3f}")
-
-        linear  = max(min(msg.linear.x  / self.max_linear,  1.0), 0.0)
-        angular = max(min(msg.angular.z / self.max_angular,  1.0), -1.0)
-
-        left_speed  = linear - (angular * self.wheel_base / 2)
-        right_speed = linear + (angular * self.wheel_base / 2)
-
-        left_speed  = max(0.0, min(1.0, left_speed))
-        right_speed = max(0.0, min(1.0, right_speed))
-
-        rospy.loginfo(f"PWM: left={left_speed:.3f}, right={right_speed:.3f}")
-
-        self.set_motor_left(left_speed)
-        self.set_motor_right(right_speed)
-    """
 
     # =========================
     # SHUTDOWN
@@ -332,8 +278,6 @@ class MotorDriver:
         #self.pi.set_servo_pulsewidth(self.pin_right, self.pwm_stop)
 
         try:
-            if self.encoder_timer is not None:
-                self.encoder_timer.shutdown()
             self._cancel_encoder_callbacks()
             self._stop_motors(reset_modes=True)
             self.pi.set_servo_pulsewidth(self.pin_spray, 0)
