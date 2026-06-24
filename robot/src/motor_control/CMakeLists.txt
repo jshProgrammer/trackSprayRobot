@@ -19,3 +19,8 @@ catkin_install_python(PROGRAMS
   scripts/pwm_drive.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
+
+install(FILES
+  scripts/encoder_reader.py
+  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
