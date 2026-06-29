@@ -21,10 +21,10 @@ motor_driver:
   encoder_right_reversed: true
   encoder_left_reversed: false
 
-  # TODO: reale Werte eintragen, bevor /wheel/twist im Kalman-Filter genutzt wird.
+  # DB42C03: 24 Hall-Zustandswechsel pro Motorumdrehung; Getriebe 10:1.
   wheel_radius: 0.1
-  encoder_ticks_per_motor_revolution: 0
-  encoder_motor_to_wheel_ratio: 1.0
+  encoder_ticks_per_motor_revolution: 24
+  encoder_motor_to_wheel_ratio: 10.0
   encoder_velocity_publish_rate: 20.0
   encoder_velocity_timeout: 0.25
   # Harte Plausibilitätsgrenze für Encoder-m/s, nicht die Fahr-Sollgeschwindigkeit.
