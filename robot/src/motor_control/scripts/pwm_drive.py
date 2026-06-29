@@ -5,7 +5,7 @@ from std_msgs.msg import Empty, Int32MultiArray
 import time
 import threading
 import pigpio
-from encoder_reader import EncoderReader
+from motor_control.encoder_reader import EncoderReader
 from robot_msgs.status import StatusReporter
 
 
