@@ -19,7 +19,7 @@ navigation:
   # =========================
   # DRIVE LIMITS
   # =========================
-  max_linear: 0.15      # m/s
+  max_linear: 0.6       # m/s – Plausibilitaetsgrenze fuer GPS-Sprungfilter
   max_angular: 0.4     # rad/s
 
   # =========================
@@ -38,8 +38,8 @@ navigation:
 
   # ── RTK-Stabilität, Ausreißer-Schutz & Spray-Bestätigung ───────────────
   rtk_stable_sec: 3.0          # s – so lange muss RTK ununterbrochen FIXED sein, bevor gestartet wird
-  gps_timeout: 2.0             # s – ohne frischen FIXED stoppt der Roboter (kein Blindfahren)
-  max_gps_jump: 0.30           # m – größere Positionssprünge pro Epoche werden verworfen
+  gps_timeout: 3.0             # s – ohne frischen FIXED stoppt der Roboter (kein Blindfahren)
+  max_gps_jump: 0.40           # m – größere Positionssprünge pro Epoche werden verworfen
   spray_confirm_sec: 0.5       # s – so lange muss der Roboter in Toleranz stehen, bevor gesprüht wird
   require_fix_for_spray: true  # nur bei RTK FIXED (Quality 4) sprühen
   obstacle_margin: 1.0         # m – Abstand zum Hindernis beim Pfadcheck
@@ -63,4 +63,3 @@ navigation:
     #- [50.04414, 10.20848]
     #- [50.04353, 10.20770]
     
-

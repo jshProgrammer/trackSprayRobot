@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 import rospy
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import Twist, TwistStamped
 from std_msgs.msg import Empty, Int32MultiArray
 import time
 import threading
 import pigpio
+from motor_control.encoder_reader import EncoderReader
 from robot_msgs.status import StatusReporter
+
 
 class MotorDriver:
     def __init__(self):
@@ -24,16 +26,6 @@ class MotorDriver:
         self.pin_right_reverse = rospy.get_param("/motor_driver/pin_right_reverse")
         self.right_motor_reversed = rospy.get_param("/motor_driver/right_motor_reversed", False)
         self.pin_spray = rospy.get_param("/motor_driver/pin_spray")
-        self.encoder_right_pins = (
-            rospy.get_param("/motor_driver/encoder_right_a"),
-            rospy.get_param("/motor_driver/encoder_right_b"),
-            rospy.get_param("/motor_driver/encoder_right_c"),
-        )
-        self.encoder_left_pins = (
-            rospy.get_param("/motor_driver/encoder_left_a"),
-            rospy.get_param("/motor_driver/encoder_left_b"),
-            rospy.get_param("/motor_driver/encoder_left_c"),
-        )
         self.hardware_pwm_gpios = set(rospy.get_param("/motor_driver/hardware_pwm_gpios"))
 
         self.pwm_stop    = rospy.get_param("/motor_driver/pwm_stop")
@@ -57,7 +49,14 @@ class MotorDriver:
             raise RuntimeError("pigpio daemon not running -> sudo pigpiod")
         
         self._stop_motors(reset_modes=True)
-        self._setup_encoders()
+        try:
+            self.encoder_reader = EncoderReader.from_ros_params(
+                self.pi,
+                "/motor_driver",
+            )
+        except (KeyError, ValueError) as exc:
+            self.status.report_fatal("MOTOR_ENCODER_CONFIG_INVALID", str(exc))
+            raise
         self.pi.set_servo_pulsewidth(self.pin_spray, 0)
         
         # =========================
@@ -65,15 +64,31 @@ class MotorDriver:
         # =========================
         self.encoder_latest = []
         self.encoder_lock = threading.Lock()
-        self.encoder_callbacks = []
         self.encoder_pub = rospy.Publisher(
             "/encoder_states",
             Int32MultiArray,
             queue_size=1,
             latch=True,
         )
+        self.encoder_twist_pub = rospy.Publisher(
+            "/wheel/twist",
+            TwistStamped,
+            queue_size=1,
+        )
+        self.encoder_twist_timer = None
         self._publish_encoder_state(force=True)
-        self._setup_encoder_callbacks()
+        self.encoder_reader.start(self._handle_encoder_change)
+        if self.encoder_reader.can_measure_velocity:
+            self.encoder_twist_timer = rospy.Timer(
+                rospy.Duration(1.0 / self.encoder_reader.velocity_publish_rate),
+                self._publish_encoder_twist,
+            )
+        else:
+            rospy.logwarn(
+                "Encoder velocity disabled: set wheel_radius, "
+                "encoder_ticks_per_motor_revolution and "
+                "encoder_motor_to_wheel_ratio in motor.yaml"
+            )
         rospy.Subscriber("/cmd_vel", Twist, self.cmd_callback, queue_size=1)
         rospy.Subscriber("/cmd_spray", Empty, self.spray_callback, queue_size=1)
         rospy.on_shutdown(self.shutdown)
@@ -140,32 +155,13 @@ class MotorDriver:
 
         self._write_pwm(pwm_pin, duty)
 
-    def _encoder_pins(self):
-        return self.encoder_right_pins + self.encoder_left_pins
+    def _handle_encoder_change(self, snapshot):
+        self._publish_encoder_state(snapshot=snapshot)
 
-    def _setup_encoders(self):
-        for gpio in self._encoder_pins():
-            self.pi.set_mode(gpio, pigpio.INPUT)
-            self.pi.set_pull_up_down(gpio, pigpio.PUD_OFF)
-
-    def _read_encoders(self):
-        right = [self.pi.read(gpio) for gpio in self.encoder_right_pins]
-        left = [self.pi.read(gpio) for gpio in self.encoder_left_pins]
-        return right, left
-
-    def _setup_encoder_callbacks(self):
-        for gpio in self._encoder_pins():
-            self.encoder_callbacks.append(
-                self.pi.callback(gpio, pigpio.EITHER_EDGE, self.encoder_edge_callback)
-            )
-
-    def _cancel_encoder_callbacks(self):
-        for callback in self.encoder_callbacks:
-            callback.cancel()
-        self.encoder_callbacks = []
-
-    def _publish_encoder_state(self, force=False):
-        right, left = self._read_encoders()
+    def _publish_encoder_state(self, snapshot=None, force=False):
+        snapshot = snapshot or self.encoder_reader.snapshot()
+        right = snapshot["right_levels"]
+        left = snapshot["left_levels"]
         encoder_state = right + left
 
         with self.encoder_lock:
@@ -178,15 +174,41 @@ class MotorDriver:
         self.encoder_pub.publish(msg)
         rospy.loginfo_throttle(
             1,
-            "ENCODER right=[%d,%d,%d] left=[%d,%d,%d]",
+            "ENCODER right=[%d,%d,%d] left=[%d,%d,%d] ticks right=%d left=%d "
+            "invalid right=%d/%d left=%d/%d",
             right[0], right[1], right[2],
             left[0], left[1], left[2],
+            snapshot["right_ticks"],
+            snapshot["left_ticks"],
+            snapshot["right_invalid_states"],
+            snapshot["right_invalid_transitions"],
+            snapshot["left_invalid_states"],
+            snapshot["left_invalid_transitions"],
         )
 
-    def encoder_edge_callback(self, gpio, level, tick):
-        if level == pigpio.TIMEOUT:
+    def _publish_encoder_twist(self, event):
+        sample = self.encoder_reader.sample_motion()
+        if sample is None:
             return
-        self._publish_encoder_state()
+
+        msg = TwistStamped()
+        msg.header.stamp = sample["stamp"]
+        msg.header.frame_id = "base_link"
+        msg.twist.linear.x = sample["linear_mps"]
+        msg.twist.angular.z = sample["angular_radps"]
+        self.encoder_twist_pub.publish(msg)
+
+        rospy.loginfo_throttle(
+            1,
+            "WHEEL_TWIST v=%.3f m/s w=%.3f rad/s "
+            "ticks right=%d left=%d delta right=%d left=%d",
+            sample["linear_mps"],
+            sample["angular_radps"],
+            sample["right_ticks"],
+            sample["left_ticks"],
+            sample["right_delta"],
+            sample["left_delta"],
+        )
 
     def set_motor_left(self, speed: float):
         self._set_bidirectional_motor(
@@ -278,7 +300,9 @@ class MotorDriver:
         #self.pi.set_servo_pulsewidth(self.pin_right, self.pwm_stop)
 
         try:
-            self._cancel_encoder_callbacks()
+            if self.encoder_twist_timer is not None:
+                self.encoder_twist_timer.shutdown()
+            self.encoder_reader.close()
             self._stop_motors(reset_modes=True)
             self.pi.set_servo_pulsewidth(self.pin_spray, 0)
         finally:

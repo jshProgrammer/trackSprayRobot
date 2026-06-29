@@ -4,10 +4,10 @@ motor_driver:
   # =========================
   pin_right: 18  # PIN 12
   pin_right_reverse: 27
-  right_motor_reversed: true
+  right_motor_reversed: false
   pin_left: 13 # PIN 33
   pin_left_reverse: 17
-  left_motor_reversed: false
+  left_motor_reversed: true
   pin_spray: 12 # PIN 32
   hardware_pwm_gpios: [12, 13, 18, 19]
 
@@ -17,6 +17,19 @@ motor_driver:
   encoder_left_a: 16
   encoder_left_b: 23
   encoder_left_c: 24
+  encoder_hall_sequence: ["001", "101", "100", "110", "010", "011"]
+  encoder_right_reversed: true
+  encoder_left_reversed: false
+
+  # DB42C03: 24 Hall-Zustandswechsel pro Motorumdrehung; Getriebe 10:1.
+  wheel_radius: 0.1
+  encoder_ticks_per_motor_revolution: 24
+  encoder_motor_to_wheel_ratio: 10.0
+  encoder_velocity_publish_rate: 20.0
+  encoder_velocity_timeout: 0.25
+  # Harte Plausibilitätsgrenze für Encoder-m/s, nicht die Fahr-Sollgeschwindigkeit.
+  encoder_velocity_max_abs: 1.0
+  use_encoder_velocity: true
 
   # =========================
   # ESC PWM SETTINGS (µs)

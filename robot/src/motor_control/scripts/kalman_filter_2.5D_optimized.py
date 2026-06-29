@@ -11,7 +11,8 @@ Optimiert für: Geradeausfahrt trotz Schlupf, Matsch und Bodenunebenheiten.
 import rospy
 import numpy as np
 import math
-from geometry_msgs.msg import Twist
+import threading
+from geometry_msgs.msg import Twist, TwistStamped
 from sensor_msgs.msg import Imu, NavSatFix
 from std_msgs.msg import UInt8
 class RTKStatus:
@@ -29,13 +30,15 @@ class EKFNoeticNode:
         self._rtk_status = RTKStatus.NO_FIX
         self.gps_quality = 0  # from /gps/quality topic from gps_node
 
-        # ── EKF-Zustand: [x, y, θ, v] ──────────────────────────────────
-        self.x = np.zeros((4, 1))
-        self.P = np.diag([1.0, 1.0, 0.1, 0.5])
+        # ── EKF-Zustand: [x, y, θ] ─────────────────────────────────────
+        self.x = np.zeros((3, 1))
+        self.P = np.diag([1.0, 1.0, 0.1])
+        self._state_lock = threading.RLock()
+        self._encoder_lock = threading.Lock()
 
         # Q (Prozessrauschen) bei Schlupf höher angesetzt, damit der Filter
         # bei durchdrehenden Rädern primär den realen Messungen vertraut.
-        self.Q = np.diag([0.06, 0.06, 0.02, 0.06])
+        self.Q = np.diag([0.06, 0.06, 0.02])
 
         # Messrauschen für GPS (RTK-Zustände)
         self.R_gps = {
@@ -44,7 +47,22 @@ class EKFNoeticNode:
         }
 
         # Da wir kein absolutes Yaw-Update mehr fahren, benötigen wir nur die GPS-Messmatrix
-        self.H_gps = np.array([[1, 0, 0, 0], [0, 1, 0, 0]])
+        self.H_gps = np.array([[1, 0, 0], [0, 1, 0]])
+        self.use_encoder_velocity = rospy.get_param("/motor_driver/use_encoder_velocity", True)
+        self.encoder_velocity_timeout = rospy.Duration(
+            max(rospy.get_param("/motor_driver/encoder_velocity_timeout", 0.25), 0.01)
+        )
+        default_encoder_velocity_max_abs = max(
+            rospy.get_param("/motor_driver/max_linear", 0.15) * 4.0,
+            0.5,
+        )
+        self.encoder_velocity_max_abs = max(
+            rospy.get_param(
+                "/motor_driver/encoder_velocity_max_abs",
+                default_encoder_velocity_max_abs,
+            ),
+            0.01,
+        )
 
         # ── Regler & Spur-Parameter ───────────────────────────────────
         self.linear_speed = 0.0
@@ -70,12 +88,15 @@ class EKFNoeticNode:
         self.antenna_height =0.26 #0.26 # GPS-Antennenhöhe in Metern
         self.roll = 0.0
         self.pitch = 0.0
+        self.encoder_linear_speed = None
+        self.last_encoder_time = None
 
         # ── ROS Schnittstellen ──────────────────────────────────────────
         rospy.Subscriber('/imu/data', Imu, self.imu_callback)
         rospy.Subscriber('/gps/fix', NavSatFix, self.gps_callback)
         rospy.Subscriber('/gps/quality', UInt8, self._gps_quality_callback)
         rospy.Subscriber('/cmd_vel_controll', Twist, self.cmd_vel_callback)
+        rospy.Subscriber('/wheel/twist', TwistStamped, self.encoder_twist_callback)
 
         self.cmd_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
 
@@ -127,15 +148,60 @@ class EKFNoeticNode:
         # Dynamisches Einrasten der Spur, sobald sich der Roboter in Bewegung setzt
         #if not self.is_moving and abs(msg.linear.x) > 0.01:
         if self.is_moving and (not was_moving or (msg.angular.z == 0 and not hasattr(self, '_last_was_steering'))):
-            self.line_start_x = self.x[0, 0]
-            self.line_start_y = self.x[1, 0]
-            self.target_heading = self.x[2, 0] 
+            current_x, current_y, current_yaw = self._state_pose()
+            self.line_start_x = current_x
+            self.line_start_y = current_y
+            self.target_heading = current_yaw
             #TODO: only add to log file
             #rospy.loginfo(f"Spur eingerastet! Kurs: {math.degrees(self.target_heading):.1f}°")
 
         #self.linear_speed = msg.linear.x
         #self.is_moving = abs(msg.linear.x) > 0.01
        
+    def encoder_twist_callback(self, msg: TwistStamped):
+        if not self.use_encoder_velocity:
+            return
+
+        measured_speed = msg.twist.linear.x
+        if not math.isfinite(measured_speed):
+            return
+        if abs(measured_speed) > self.encoder_velocity_max_abs:
+            rospy.logwarn_throttle(
+                1.0,
+                "Encoder speed outlier ignored: %.3f m/s exceeds %.3f m/s",
+                measured_speed,
+                self.encoder_velocity_max_abs,
+            )
+            return
+
+        stamp = msg.header.stamp
+        if stamp == rospy.Time(0):
+            stamp = rospy.Time.now()
+
+        with self._encoder_lock:
+            self.encoder_linear_speed = measured_speed
+            self.last_encoder_time = stamp
+
+    def _encoder_speed_sample(self, now):
+        with self._encoder_lock:
+            if self.encoder_linear_speed is None or self.last_encoder_time is None:
+                return None
+            age = (now - self.last_encoder_time).to_sec()
+            if -0.05 <= age <= self.encoder_velocity_timeout.to_sec():
+                return self.encoder_linear_speed
+        return None
+
+    def _prediction_speed(self, now):
+        if self.use_encoder_velocity:
+            encoder_speed = self._encoder_speed_sample(now)
+            if encoder_speed is not None:
+                return encoder_speed
+        return self.linear_speed
+
+    def _state_pose(self):
+        with self._state_lock:
+            return self.x[0, 0], self.x[1, 0], self.x[2, 0]
+
 
     def imu_callback(self, msg: Imu):
         """
@@ -200,31 +266,31 @@ class EKFNoeticNode:
     # ══════════════════════════════════════════════════════════════════
 
     def _ekf_predict(self, v, w, dt):
-        px, py, th, _ = self.x.flatten()
-        # Zustand mathematisch sauber fortschreiben anhand der echten IMU-Drehrate w
-        self.x = np.array([
-            [px + v * math.cos(th) * dt],
-            [py + v * math.sin(th) * dt],
-            [self._wrap(th + w * dt)],
-            [v],
-        ])
-        F = np.array([
-            [1, 0, -v * math.sin(th) * dt,  math.cos(th) * dt],
-            [0, 1,  v * math.cos(th) * dt,  math.sin(th) * dt],
-            [0, 0,  1,                      0],
-            [0, 0,  0,                      1],
-        ])
-        self.P = F @ self.P @ F.T + self.Q
+        with self._state_lock:
+            px, py, th = self.x.flatten()
+            # v ist hier die gewählte Eingangsgeschwindigkeit: Encoder, falls frisch, sonst Kommando.
+            self.x = np.array([
+                [px + v * math.cos(th) * dt],
+                [py + v * math.sin(th) * dt],
+                [self._wrap(th + w * dt)],
+            ])
+            F = np.array([
+                [1, 0, -v * math.sin(th) * dt],
+                [0, 1,  v * math.cos(th) * dt],
+                [0, 0,  1],
+            ])
+            self.P = F @ self.P @ F.T + self.Q
 
     def _ekf_update(self, z, H, R, wrap_idx=None):
-        innovation = z - H @ self.x
-        if wrap_idx is not None:
-            innovation[wrap_idx, 0] = self._wrap(innovation[wrap_idx, 0])
-        S = H @ self.P @ H.T + R
-        K = self.P @ H.T @ np.linalg.inv(S)
-        self.x = self.x + K @ innovation
-        self.x[2, 0] = self._wrap(self.x[2, 0])
-        self.P = (np.eye(4) - K @ H) @ self.P
+        with self._state_lock:
+            innovation = z - H @ self.x
+            if wrap_idx is not None:
+                innovation[wrap_idx, 0] = self._wrap(innovation[wrap_idx, 0])
+            S = H @ self.P @ H.T + R
+            K = self.P @ H.T @ np.linalg.inv(S)
+            self.x = self.x + K @ innovation
+            self.x[2, 0] = self._wrap(self.x[2, 0])
+            self.P = (np.eye(3) - K @ H) @ self.P
 
     # ══════════════════════════════════════════════════════════════════
     # REGLER-SCHLEIFE (20 Hz Taktung)
@@ -237,13 +303,11 @@ class EKFNoeticNode:
         if dt <= 0: return
 
         # 1. EKF-Schritt: Zustand mit real vergangenem dt prädizieren
-        self._ekf_predict(v=self.linear_speed, w=self.imu_w, dt=dt)
+        self._ekf_predict(v=self._prediction_speed(now), w=self.imu_w, dt=dt)
         """
         cmd = Twist()
         if self.is_moving:
-            current_x   = self.x[0, 0]
-            current_y   = self.x[1, 0]
-            current_yaw = self.x[2, 0]
+            current_x, current_y, current_yaw = self._state_pose()
 
             # ── STANLEY REGELUNG ──
             # A: Winkelfehler berechnen (PD-Anteil für Kursstabilität)
@@ -274,9 +338,7 @@ class EKFNoeticNode:
 
         cmd = Twist()
         if self.is_moving:
-            current_x   = self.x[0, 0]
-            current_y   = self.x[1, 0]
-            current_yaw = self.x[2, 0]
+            current_x, current_y, current_yaw = self._state_pose()
 
             # MODUS A: Der Benutzer lenkt aktiv von Hand (Kurve)
             if abs(self.commanded_angular_speed) > 0.01:
