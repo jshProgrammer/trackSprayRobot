@@ -4,10 +4,10 @@ motor_driver:
   # =========================
   pin_right: 18  # PIN 12
   pin_right_reverse: 27
-  right_motor_reversed: true
+  right_motor_reversed: false
   pin_left: 13 # PIN 33
   pin_left_reverse: 17
-  left_motor_reversed: false
+  left_motor_reversed: true
   pin_spray: 12 # PIN 32
   hardware_pwm_gpios: [12, 13, 18, 19]
 
