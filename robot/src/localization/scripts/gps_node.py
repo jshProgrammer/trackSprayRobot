@@ -27,7 +27,7 @@ class LC29HDriver:
         self.port       = rospy.get_param("~port",       "/dev/ttyUSB0")
         self.baud       = rospy.get_param("~baud",       115200)
         self.frame_id   = rospy.get_param("~frame_id",   "gps_link")
-        self.gps_rate_hz = rospy.get_param("~gps_rate_hz", 50)
+        self.gps_rate_hz = rospy.get_param("~gps_rate_hz", 10)
  
     def _init_serial(self):
         try:
