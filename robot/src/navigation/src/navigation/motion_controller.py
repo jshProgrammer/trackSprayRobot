@@ -45,11 +45,17 @@ class MotionController:
         angular = max(-self._p.angular_velocity,
                       min(self._p.angular_velocity, k_p * angle_error))
 
-        # TODO: attempt to reduce speed when distance <= 1.5
-        if abs(angle_error) > math.radians(45):
-            linear = 0.05
+        # Rotate-in-place if we're close to the target but have a large angular error.
+        angle_threshold = math.radians(self._p.rotate_in_place_angle_deg)
+        if distance <= self._p.rotate_in_place_distance and abs(angle_error) > angle_threshold:
+            linear = 0.0
+            angular = math.copysign(min(self._p.angular_velocity, self._p.max_angular), angle_error)
         else:
-            linear = 0.1
+            # Reduce forward speed when angle error is large to avoid overshoot.
+            if abs(angle_error) > math.radians(45):
+                linear = 0.05
+            else:
+                linear = 0.1
 
         debug_output = (
             f"{label} | "

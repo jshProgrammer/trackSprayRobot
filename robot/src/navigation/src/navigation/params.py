@@ -49,6 +49,9 @@ class NavParams:
     # ── Auto-Kalibrierung (Kinematic Alignment) ─────────────────────────
     calib_distance: float
     calib_min_time: float
+    # --- Rotate-in-place behavior
+    rotate_in_place_distance: float
+    rotate_in_place_angle_deg: float
 
     @classmethod
     def from_rosparam(cls) -> "NavParams":
@@ -91,4 +94,6 @@ class NavParams:
             # Auto-Kalibrierung: Strecke geradeaus, bis der GPS-Vektor stabil ist
             calib_distance=rospy.get_param('~calib_distance', 3.0),
             calib_min_time=rospy.get_param('~calib_min_time', 3.0),
+            rotate_in_place_distance=rospy.get_param('~rotate_in_place_distance', 0.6),
+            rotate_in_place_angle_deg=rospy.get_param('~rotate_in_place_angle_deg', 15.0),
         )
