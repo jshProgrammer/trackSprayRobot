@@ -5,6 +5,7 @@ from std_msgs.msg import Empty, Int32MultiArray
 import time
 import threading
 import pigpio
+from motor_control.drive_math import compute_wheel_speeds, normalize_twist_command
 from motor_control.encoder_reader import EncoderReader
 from robot_msgs.status import StatusReporter
 
@@ -249,42 +250,35 @@ class MotorDriver:
     # CMD_VEL CALLBACK
     # =========================
     def cmd_callback(self, msg: Twist):
-        # 1. Mathematisch saubere Skalierung
-        linear  = max(min(msg.linear.x  / self.max_linear,  1.0), 0.0)
-        angular = max(min(msg.angular.z / self.max_angular,  1.0), -1.0)
-
-        # 2. Saubere Kurvenberechnung (Verhältnis bleibt intakt!)
-        left_speed  = linear - (angular * self.wheel_base / 2)
-        right_speed = linear + (angular * self.wheel_base / 2)
-
-        """
-        rospy.loginfo_throttle(
-            1,
-            f"PWM_DRIVE linear={linear} "
-            f"PWM_DRIVE angular={angular} "
-            f"left_speed_before={left_speed}"
-            f"right_speed_before={right_speed}"
+        linear_cmd, angular_cmd = normalize_twist_command(
+            msg.linear.x,
+            msg.angular.z,
+            self.max_linear,
+            self.max_angular,
         )
-        """
+
+        left_speed, right_speed = compute_wheel_speeds(
+            linear_cmd,
+            angular_cmd,
+            self.wheel_base,
+        )
 
         # 3. DIE SICHERHEITS-LEINE (Hardware-Deckel)
-        # Anstatt 1.0 (100% Vollgas) begrenzen wir die Motoren hier hart auf z.B. 0.3 (30% Leistung).
-        # Er kann jetzt physisch nicht schneller als 30% fahren, egal was das Gehirn befiehlt!
-        MAX_SAFE_PWM = 0.15 # <-- Hier könnt ihr auf dem Feld hochgehen, wenn er gut fährt (z.B. 0.5)
+        # Anstatt 1.0 (100% Vollgas) begrenzen wir die Motoren hier hart auf z.B. 0.15 (15% Leistung).
+        # Dadurch bleibt die Drehung auf der Stelle auch bei großen Angular-Befehlen stabil.
+        MAX_SAFE_PWM = 0.15
 
         max_speed = max(abs(left_speed), abs(right_speed))
-
         if max_speed > MAX_SAFE_PWM:
             scale = MAX_SAFE_PWM / max_speed
-
             left_speed *= scale
             right_speed *= scale
 
         rospy.loginfo_throttle(
-                1,
-                f"left_speed_after={left_speed}"
-                f"right_speed_after={right_speed}"
-            )
+            1,
+            f"cmd linear={msg.linear.x:.3f} angular={msg.angular.z:.3f} "
+            f"left_speed={left_speed:.3f} right_speed={right_speed:.3f}",
+        )
 
         self.set_motor_left(left_speed)
         self.set_motor_right(right_speed)
