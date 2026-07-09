@@ -81,6 +81,11 @@ class NavigationNode:
         self.at_goal = False
         self.in_tol_since = None   # seit wann ununterbrochen in Toleranz (Spray-Bestätigung)
         self.pause_until = None    # non-blocking Pause nach dem Sprühen
+        self.return_target_xy = None
+        self.return_target_lat = None
+        self.return_target_lon = None
+        self.returning_to_start = False
+        self.return_complete = False
 
         # ── Obstacle Bypass-State ─────────────────────────────────────────
         self.bypass_targets = []   # Liste von (x, y) Umfahrungspunkten (leer = keine Umfahrung)
@@ -291,6 +296,20 @@ class NavigationNode:
             return False
 
         if self.current_waypoint_index >= len(self.waypoints):
+            if self.return_target_xy is not None and not self.returning_to_start and not self.return_complete:
+                self.returning_to_start = True
+                self.status.info(
+                    "RETURNING_TO_START",
+                    "Alle Waypoints erreicht – Rückfahrt zum Startpunkt wird gestartet",
+                    dedup=False,
+                )
+                rospy.loginfo("Alle Waypoints erreicht – Rückfahrt zum Startpunkt wird gestartet")
+                self._publish_navigating_state()
+                return True
+
+            if self.returning_to_start:
+                return True
+
             if not self.at_goal:
                 rospy.loginfo("Alle Waypoints erreicht! Roboter stoppt.")
                 self.at_goal = True
@@ -307,6 +326,11 @@ class NavigationNode:
     # ════════════════════════════════════════════════════════════════════
     def _initialize_calibration_state(self, cur_x: float, cur_y: float):
         """Records the calibration start position and transitions to CALIBRATING."""
+        self.return_target_xy = (cur_x, cur_y)
+        self.return_target_lat = self.rtk.current_lat
+        self.return_target_lon = self.rtk.current_lon
+        self.returning_to_start = False
+        self.return_complete = False
         self.calib.start(cur_x, cur_y)
         self.nav_state = "CALIBRATING"
         self.state_pub.publish(NavigationState.STATE_CALIBRATING, waypoint_total=len(self.waypoints))
@@ -327,8 +351,28 @@ class NavigationNode:
             self.nav_state = "NAVIGATING"
             self._publish_navigating_state()
 
+    def _get_current_target_xy(self):
+        if self.returning_to_start and self.return_target_xy is not None:
+            return self.return_target_xy
+
+        if self.current_waypoint_index < len(self.waypoints):
+            goal_lat, goal_lon = self.waypoints[self.current_waypoint_index]
+            return gps_to_xy(goal_lat, goal_lon, self.rtk.origin_lat, self.rtk.origin_lon)
+
+        return None
+
     def _publish_navigating_state(self):
         """Published STATE_NAVIGATING mit dem aktuellen Ziel-Wegpunkt (1-basiert + lat/lon)."""
+        if self.returning_to_start and self.return_target_lat is not None and self.return_target_lon is not None:
+            self.state_pub.publish(
+                NavigationState.STATE_NAVIGATING,
+                waypoint_index=len(self.waypoints) + 1,
+                waypoint_total=len(self.waypoints),
+                target_lat=float(self.return_target_lat),
+                target_lon=float(self.return_target_lon),
+            )
+            return
+
         if self.current_waypoint_index >= len(self.waypoints):
             return
         goal_lat, goal_lon = self.waypoints[self.current_waypoint_index]
@@ -351,6 +395,28 @@ class NavigationNode:
         # GPS sitzt 58cm hinter der Düse → Düsenposition in Fahrtrichtung vorrechnen
         nozzle_x = cur_x + self.p.gps_to_nozzle_offset * math.cos(true_robot_heading)
         nozzle_y = cur_y + self.p.gps_to_nozzle_offset * math.sin(true_robot_heading)
+
+        if self.returning_to_start:
+            target_x, target_y = self.return_target_xy or (None, None)
+            if target_x is None or target_y is None:
+                self.motion.stop()
+                return
+
+            distance = math.hypot(target_x - nozzle_x, target_y - nozzle_y)
+            if distance < self.p.waypoint_tolerance:
+                self.motion.stop()
+                rospy.loginfo("Zum Startpunkt zurückgekehrt. Roboter stoppt.")
+                self.status.info("RETURN_COMPLETE", "Zum Startpunkt zurückgekehrt – Roboter stoppt", dedup=False)
+                self.state_pub.publish(NavigationState.STATE_GOAL_REACHED,
+                                       waypoint_total=len(self.waypoints))
+                self.at_goal = True
+                self.returning_to_start = False
+                self.return_complete = True
+                return
+
+            self._steer_towards(nozzle_x, nozzle_y, target_x, target_y,
+                                label="Rückfahrt zum Startpunkt")
+            return
 
         # 2. Umfahrung aktiv? → erst die Bypass-Punkte der Reihe nach abfahren
         if self.bypass_targets:
