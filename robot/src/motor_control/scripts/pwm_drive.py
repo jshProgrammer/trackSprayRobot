@@ -117,7 +117,7 @@ class MotorDriver:
 
         if gpio in self.hardware_pwm_gpios:
             pulse = int(1000000 * speed)
-            rospy.loginfo(f"[IMPORTANT]!!!!!!!!!!!!!!!Setting hardware PWM for GPIO {gpio}: {pulse}")
+            #rospy.loginfo(f"[IMPORTANT]!!!!!!!!!!!!!!!Setting hardware PWM for GPIO {gpio}: {pulse}")
             self.pi.hardware_PWM(gpio, self.motor_frequency, pulse)
             return
 
