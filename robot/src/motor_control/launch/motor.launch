@@ -12,7 +12,7 @@
 	</node>
 
 	<!-- TODO: to be extracted to individual package -->
-	<node name="kalman_filter" pkg="motor_control" type="kalman_filter_2.5D_optimized.py"
-		output="screen"/>
+	<!--<node name="kalman_filter" pkg="motor_control" type="kalman_filter_2.5D_optimized.py"
+		output="screen"/>-->
     
 </launch>
