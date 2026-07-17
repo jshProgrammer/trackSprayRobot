@@ -2,7 +2,7 @@ diff_drive_controller:
   type: diff_drive_controller/diff_drive_controller
   left_wheel: 'left_wheel_joint'
   right_wheel: 'right_wheel_joint'
-  wheel_separation: 0.445
+  wheel_separation: 0.4182903
   wheel_radius: 0.1
   publish_rate: 1000.0
   cmd_vel_timeout: 0.5
